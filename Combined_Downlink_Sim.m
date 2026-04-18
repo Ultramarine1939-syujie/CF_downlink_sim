@@ -1,6 +1,7 @@
 %% ================= Initialization =================
 close all; clear;
 
+% ========== 仿真配置参数 ==========
 % 系统参数
 L = 100; N = 1; K = 20;
 tau_c = 200; tau_p = 10;
@@ -18,7 +19,7 @@ sigma_e = 0.3;     % CSI误差
 nIter = 5;
 
 % ===== 多场景实验参数 =====
-numScenarios = 10; % 场景实验次数
+numScenarios = 3; % 场景实验次数
 nbrOfRealizations = 200; % 每个场景下的信道数
 
 % 接口：设置要展示的仿真场景数量
@@ -46,6 +47,16 @@ if isSaveData && exist(dataPath, 'dir')
     mkdir(dataPath);
 end
 
+% ========== 状态显示配置 ==========
+SHOW_DETAILED_STATUS = true;    % 是否显示详细步骤
+
+% 计算总迭代次数
+totalIterations = numScenarios * num_snr * 4; % 4种算法(All-UE L/R, DCC-UE L/R)
+completedIterations = 0;
+
+% ========== 打印仿真配置信息 ==========
+printSimConfig(L, N, K, tau_c, tau_p, SNR_dB, numScenarios, nbrOfRealizations, sigma_e, nIter, isSaveFig, isSaveData);
+
 % 初始化结果存储 (用于累加后取均值)
 ESR_L_MMSE_all_total = zeros(num_snr,1);
 ESR_R_MMSE_all_total = zeros(num_snr,1);
@@ -53,65 +64,115 @@ ESR_L_MMSE_dcc_total = zeros(num_snr,1);
 ESR_R_MMSE_dcc_total = zeros(num_snr,1);
 
 %% ================= Scenario Loop =================
+fprintf('▶ Starting main simulation loop...\n');
+fprintf('  Total scenarios: %d | SNR points: %d | Algorithms: 4\n\n', numScenarios, num_snr);
+
 for s = 1:numScenarios
-    fprintf('>>> Running Scenario %d/%d...\n', s, numScenarios);
+    scenarioProgress = (s - 1) / numScenarios * 100;
     
-    % 1. 生成当前场景的 AP/UE 分布及相关矩阵
+    fprintf('\n');
+    fprintf('╔══════════════════════════════════════════════════════════════╗\n');
+    fprintf('║  SCENARIO %2d / %2d  [ %5.1f%% ]                              ║\n', s, numScenarios, scenarioProgress);
+    fprintf('╚══════════════════════════════════════════════════════════════╝\n');
+    
+    % ========== Step 1: 生成场景布局 ==========
+    if SHOW_DETAILED_STATUS
+        fprintf('  ┌─ [1/5] Generating scenario setup (AP/UE distribution)...\n');
+    end
     [gainOverNoisedB,R,pilotIndex,D,~,APpositions,UEpositions] = generateSetup(L,K,N,tau_p,1,s,ASD_varphi,ASD_theta);
+    if SHOW_DETAILED_STATUS
+        fprintf('  │   └─ Done\n');
+    end
     
     % 绘制场景布局（根据用户设置的数量）
     if s <= numScenariosToPlot
         plotScenarioSetup(APpositions, UEpositions, s, isSaveFig, savePath, isSaveData, dataPath);
     end
     
-    % 2. 生成信道估计和真实信道
+    % ========== Step 2: 信道估计 ==========
+    if SHOW_DETAILED_STATUS
+        fprintf('  ┌─ [2/5] Performing channel estimation...\n');
+        fprintf('  │   └─ Realizations: %d, Pilots: %d\n', nbrOfRealizations, tau_p);
+    end
     [Hhat,H_ideal,~,C] = functionChannelEstimates(R,nbrOfRealizations,L,K,N,tau_p,pilotIndex,p);
+    if SHOW_DETAILED_STATUS
+        fprintf('  │   └─ Done\n');
+    end
     
-    % 3. 引入 CSI 误差
+    % ========== Step 3: 引入 CSI 误差 ==========
+    if SHOW_DETAILED_STATUS
+        fprintf('  ┌─ [3/5] Introducing CSI error (sigma_e = %.2f)...\n', sigma_e);
+    end
     H = Hhat + sqrt(sigma_e^2/2)*(randn(size(Hhat))+1i*randn(size(Hhat)));
+    if SHOW_DETAILED_STATUS
+        fprintf('  │   └─ Done\n');
+    end
     
     gainOverNoise = db2pow(gainOverNoisedB(:,:,1));
     D_dcc = D(:,:,1); % 获取 DCC 接入矩阵
 
     %% ================= SNR扫描 =================
+    fprintf('  ┌─ [4/5] Running SNR sweep (%d points)...\n', num_snr);
+    
     for snr_idx = 1:num_snr
         Pt = db2pow(SNR_dB(snr_idx)); % 总功率
-        fprintf('    SNR Index: %d/%d (SNR = %d dB)\n', snr_idx, num_snr, SNR_dB(snr_idx));
         
         % --- All-UE Case ---
         D_all = ones(L,K);
-        rho_dist_all = zeros(L,K);
-        for l=1:L
-            servedUEs = find(D_all(l,:)==1);
-            normFactor = sum(sqrt(gainOverNoise(l,servedUEs)));
-            for k=servedUEs
-                rho_dist_all(l,k) = Pt * sqrt(gainOverNoise(l,k))/normFactor;
-            end
+        rho_dist_all = computeRhoDist(D_all, gainOverNoise, Pt, L, K);
+        
+        if SHOW_DETAILED_STATUS
+            fprintf('  │   ┌─ SNR %2d/%2d (%.1f dB) - All-UE\n', snr_idx, num_snr, SNR_dB(snr_idx));
         end
         
         SE_L_all = functionComputeSE_downlink_LMMSE(Hhat,H,D_all,C,tau_c,tau_p,nbrOfRealizations,N,K,L,p,rho_dist_all);
         SE_R_all = functionComputeSE_downlink_RobustMMSE(Hhat,H,D_all,C,tau_c,tau_p,nbrOfRealizations,N,K,L,p,rho_dist_all,sigma_e,Pt,nIter);
         
+        if SHOW_DETAILED_STATUS
+            fprintf('  │   │   ├─ L-MMSE:      SE=%.4f\n', sum(SE_L_all));
+            fprintf('  │   │   └─ Robust-MMSE: SE=%.4f\n', sum(SE_R_all));
+        end
+        
         ESR_L_MMSE_all_total(snr_idx) = ESR_L_MMSE_all_total(snr_idx) + sum(SE_L_all);
         ESR_R_MMSE_all_total(snr_idx) = ESR_R_MMSE_all_total(snr_idx) + sum(SE_R_all);
         
         % --- DCC-UE Case ---
-        rho_dist_dcc = zeros(L,K);
-        for l=1:L
-            servedUEs = find(D_dcc(l,:)==1);
-            if isempty(servedUEs); continue; end
-            normFactor = sum(sqrt(gainOverNoise(l,servedUEs)));
-            for k=servedUEs
-                rho_dist_dcc(l,k) = Pt * sqrt(gainOverNoise(l,k))/normFactor;
-            end
+        rho_dist_dcc = computeRhoDist(D_dcc, gainOverNoise, Pt, L, K);
+        
+        if SHOW_DETAILED_STATUS
+            fprintf('  │   └─ SNR %2d/%2d (%.1f dB) - DCC-UE\n', snr_idx, num_snr, SNR_dB(snr_idx));
         end
         
         SE_L_dcc = functionComputeSE_downlink_LMMSE(Hhat,H,D_dcc,C,tau_c,tau_p,nbrOfRealizations,N,K,L,p,rho_dist_dcc);
         SE_R_dcc = functionComputeSE_downlink_RobustMMSE(Hhat,H,D_dcc,C,tau_c,tau_p,nbrOfRealizations,N,K,L,p,rho_dist_dcc,sigma_e,Pt,nIter);
         
+        if SHOW_DETAILED_STATUS
+            fprintf('  │       ├─ L-MMSE:      SE=%.4f\n', sum(SE_L_dcc));
+            fprintf('  │       └─ Robust-MMSE: SE=%.4f\n', sum(SE_R_dcc));
+        end
+        
         ESR_L_MMSE_dcc_total(snr_idx) = ESR_L_MMSE_dcc_total(snr_idx) + sum(SE_L_dcc);
         ESR_R_MMSE_dcc_total(snr_idx) = ESR_R_MMSE_dcc_total(snr_idx) + sum(SE_R_dcc);
+        
+        % 更新进度
+        completedIterations = completedIterations + 4;
+        overallProgress = completedIterations / totalIterations * 100;
+        
+        % 显示进度条
+        barLen = 40;
+        filled = round(barLen * overallProgress / 100);
+        barStr = repmat('=', 1, filled);
+        spaces = repmat(' ', 1, barLen - filled);
+        fprintf('  │  [%s%s] %5.1f%%\n', barStr, spaces, overallProgress);
     end
+    
+    fprintf('  └─ SNR sweep completed\n');
+    
+    % ========== Step 5: 场景汇总 ==========
+    fprintf('\n');
+    fprintf('  ┌─ [5/5] Scenario %d Summary:\n', s);
+    fprintf('  │   └─ Progress: %d/%d scenarios completed\n', s, numScenarios);
+    fprintf('  └─ Overall: %.1f%% done\n\n', s / numScenarios * 100);
 end
 
 % 计算均值
@@ -120,28 +181,9 @@ ESR_R_MMSE_all = ESR_R_MMSE_all_total / numScenarios;
 ESR_L_MMSE_dcc = ESR_L_MMSE_dcc_total / numScenarios;
 ESR_R_MMSE_dcc = ESR_R_MMSE_dcc_total / numScenarios;
 
-fprintf('>>> Simulation Completed Successfully.\n');
+%% ================= Output Results =================
+printFinalResults(ESR_L_MMSE_all, ESR_R_MMSE_all, ESR_L_MMSE_dcc, ESR_R_MMSE_dcc, ...
+    numScenarios, nbrOfRealizations, num_snr, totalIterations, isSaveFig, isSaveData, savePath, dataPath);
 
-%% ================= Plot Results =================
-figure;
-plot(SNR_dB, ESR_L_MMSE_all,'-s','LineWidth',2); hold on;
-plot(SNR_dB, ESR_R_MMSE_all,'-o','LineWidth',2);
-plot(SNR_dB, ESR_L_MMSE_dcc,'--s','LineWidth',2);
-plot(SNR_dB, ESR_R_MMSE_dcc,'--o','LineWidth',2);
-
-legend('L-MMSE (All)','Robust MMSE (All)','L-MMSE (DCC)','Robust MMSE (DCC)');
-xlabel('SNR (dB)'); ylabel('Ergodic Sum Rate (ESR)');
-title(sprintf('Averaged ESR over %d Scenarios: All-AP vs DCC', numScenarios));
-grid on;
-
-% 保存结果图
-if isSaveFig
-    saveas(gcf, fullfile(savePath, 'Averaged_ESR_Results.fig'));
-    saveas(gcf, fullfile(savePath, 'Averaged_ESR_Results.png'));
-end
-
-% 保存仿真数据
-if isSaveData
-    save(fullfile(dataPath, 'Simulation_Results_Data.mat'), ...
-        'SNR_dB', 'ESR_L_MMSE_all', 'ESR_R_MMSE_all', 'ESR_L_MMSE_dcc', 'ESR_R_MMSE_dcc', 'numScenarios');
-end
+plotESRResults(SNR_dB, ESR_L_MMSE_all, ESR_R_MMSE_all, ESR_L_MMSE_dcc, ESR_R_MMSE_dcc, ...
+    numScenarios, isSaveFig, savePath, isSaveData, dataPath);

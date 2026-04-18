@@ -1,6 +1,8 @@
 % 新增函数：绘制 AP 和 UE 的位置
 function plotScenarioSetup(APpositions, UEpositions, scenarioIdx, isSaveFig, savePath, isSaveData, dataPath)
-    figure;
+    % 创建一个隐藏的 figure 用于绘图和保存
+    figHandle = figure('Visible', 'off');
+    
     plot(real(APpositions), imag(APpositions), 'b^', 'MarkerSize', 8, 'LineWidth', 1.5, 'DisplayName', 'APs');
     hold on;
     plot(real(UEpositions), imag(UEpositions), 'ro', 'MarkerSize', 6, 'MarkerFaceColor', 'r', 'DisplayName', 'UEs');
@@ -13,9 +15,13 @@ function plotScenarioSetup(APpositions, UEpositions, scenarioIdx, isSaveFig, sav
     axis square;
     
     % 保存图像
-    if nargin > 3 && isSaveFig
-        saveas(gcf, fullfile(savePath, sprintf('Scenario_%d_Layout.fig', scenarioIdx)));
-        saveas(gcf, fullfile(savePath, sprintf('Scenario_%d_Layout.png', scenarioIdx)));
+    if nargin > 3 && isSaveFig && isvalid(figHandle)
+        try
+            saveas(figHandle, fullfile(savePath, sprintf('Scenario_%d_Layout.fig', scenarioIdx)));
+            saveas(figHandle, fullfile(savePath, sprintf('Scenario_%d_Layout.png', scenarioIdx)));
+        catch ME
+            fprintf('  ⚠ Warning: Failed to save scenario figure: %s\n', ME.message);
+        end
     end
     
     % 保存数据
@@ -24,4 +30,5 @@ function plotScenarioSetup(APpositions, UEpositions, scenarioIdx, isSaveFig, sav
     end
     
     hold off;
+    close(figHandle);
 end
