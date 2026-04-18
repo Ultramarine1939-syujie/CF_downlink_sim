@@ -51,21 +51,23 @@ end
 SHOW_DETAILED_STATUS = true;    % 是否显示详细步骤
 
 % 计算总迭代次数
-totalIterations = numScenarios * num_snr * 4; % 4种算法(All-UE L/R, DCC-UE L/R)
+totalIterations = numScenarios * num_snr * 6; % 6种算法(All-UE MR/L/R, DCC-UE MR/L/R)
 completedIterations = 0;
 
 % ========== 打印仿真配置信息 ==========
 printSimConfig(L, N, K, tau_c, tau_p, SNR_dB, numScenarios, nbrOfRealizations, sigma_e, nIter, isSaveFig, isSaveData);
 
 % 初始化结果存储 (用于累加后取均值)
+ESR_MR_all_total = zeros(num_snr,1);
 ESR_L_MMSE_all_total = zeros(num_snr,1);
 ESR_R_MMSE_all_total = zeros(num_snr,1);
+ESR_MR_dcc_total = zeros(num_snr,1);
 ESR_L_MMSE_dcc_total = zeros(num_snr,1);
 ESR_R_MMSE_dcc_total = zeros(num_snr,1);
 
 %% ================= Scenario Loop =================
 fprintf('▶ Starting main simulation loop...\n');
-fprintf('  Total scenarios: %d | SNR points: %d | Algorithms: 4\n\n', numScenarios, num_snr);
+fprintf('  Total scenarios: %d | SNR points: %d | Algorithms: 6 (MR, L-MMSE, R-MMSE)\n\n', numScenarios, num_snr);
 
 for s = 1:numScenarios
     scenarioProgress = (s - 1) / numScenarios * 100;
@@ -125,14 +127,20 @@ for s = 1:numScenarios
             fprintf('  │   ┌─ SNR %2d/%2d (%.1f dB) - All-UE\n', snr_idx, num_snr, SNR_dB(snr_idx));
         end
         
+        % MR (Maximum Ratio) precoding
+        [V_MR_all, scaling_MR_all] = functionPrecoding_MR(Hhat, nbrOfRealizations, N, K, L);
+        SE_MR_all = functionComputeSE_downlink_MR(H, V_MR_all, scaling_MR_all, D_all, tau_c, tau_p, nbrOfRealizations, N, K, L, rho_dist_all);
+        
         SE_L_all = functionComputeSE_downlink_LMMSE(Hhat,H,D_all,C,tau_c,tau_p,nbrOfRealizations,N,K,L,p,rho_dist_all);
         SE_R_all = functionComputeSE_downlink_RobustMMSE(Hhat,H,D_all,C,tau_c,tau_p,nbrOfRealizations,N,K,L,p,rho_dist_all,sigma_e,Pt,nIter);
         
         if SHOW_DETAILED_STATUS
+            fprintf('  │   │   ├─ MR:          SE=%.4f\n', sum(SE_MR_all));
             fprintf('  │   │   ├─ L-MMSE:      SE=%.4f\n', sum(SE_L_all));
             fprintf('  │   │   └─ Robust-MMSE: SE=%.4f\n', sum(SE_R_all));
         end
         
+        ESR_MR_all_total(snr_idx) = ESR_MR_all_total(snr_idx) + sum(SE_MR_all);
         ESR_L_MMSE_all_total(snr_idx) = ESR_L_MMSE_all_total(snr_idx) + sum(SE_L_all);
         ESR_R_MMSE_all_total(snr_idx) = ESR_R_MMSE_all_total(snr_idx) + sum(SE_R_all);
         
@@ -143,19 +151,25 @@ for s = 1:numScenarios
             fprintf('  │   └─ SNR %2d/%2d (%.1f dB) - DCC-UE\n', snr_idx, num_snr, SNR_dB(snr_idx));
         end
         
+        % MR (Maximum Ratio) precoding for DCC
+        [V_MR_dcc, scaling_MR_dcc] = functionPrecoding_MR(Hhat, nbrOfRealizations, N, K, L);
+        SE_MR_dcc = functionComputeSE_downlink_MR(H, V_MR_dcc, scaling_MR_dcc, D_dcc, tau_c, tau_p, nbrOfRealizations, N, K, L, rho_dist_dcc);
+        
         SE_L_dcc = functionComputeSE_downlink_LMMSE(Hhat,H,D_dcc,C,tau_c,tau_p,nbrOfRealizations,N,K,L,p,rho_dist_dcc);
         SE_R_dcc = functionComputeSE_downlink_RobustMMSE(Hhat,H,D_dcc,C,tau_c,tau_p,nbrOfRealizations,N,K,L,p,rho_dist_dcc,sigma_e,Pt,nIter);
         
         if SHOW_DETAILED_STATUS
+            fprintf('  │       ├─ MR:          SE=%.4f\n', sum(SE_MR_dcc));
             fprintf('  │       ├─ L-MMSE:      SE=%.4f\n', sum(SE_L_dcc));
             fprintf('  │       └─ Robust-MMSE: SE=%.4f\n', sum(SE_R_dcc));
         end
         
+        ESR_MR_dcc_total(snr_idx) = ESR_MR_dcc_total(snr_idx) + sum(SE_MR_dcc);
         ESR_L_MMSE_dcc_total(snr_idx) = ESR_L_MMSE_dcc_total(snr_idx) + sum(SE_L_dcc);
         ESR_R_MMSE_dcc_total(snr_idx) = ESR_R_MMSE_dcc_total(snr_idx) + sum(SE_R_dcc);
         
         % 更新进度
-        completedIterations = completedIterations + 4;
+        completedIterations = completedIterations + 6;
         overallProgress = completedIterations / totalIterations * 100;
         
         % 显示进度条
@@ -176,14 +190,16 @@ for s = 1:numScenarios
 end
 
 % 计算均值
+ESR_MR_all = ESR_MR_all_total / numScenarios;
 ESR_L_MMSE_all = ESR_L_MMSE_all_total / numScenarios;
 ESR_R_MMSE_all = ESR_R_MMSE_all_total / numScenarios;
+ESR_MR_dcc = ESR_MR_dcc_total / numScenarios;
 ESR_L_MMSE_dcc = ESR_L_MMSE_dcc_total / numScenarios;
 ESR_R_MMSE_dcc = ESR_R_MMSE_dcc_total / numScenarios;
 
 %% ================= Output Results =================
-printFinalResults(ESR_L_MMSE_all, ESR_R_MMSE_all, ESR_L_MMSE_dcc, ESR_R_MMSE_dcc, ...
+printFinalResults(ESR_MR_all, ESR_L_MMSE_all, ESR_R_MMSE_all, ESR_MR_dcc, ESR_L_MMSE_dcc, ESR_R_MMSE_dcc, ...
     numScenarios, nbrOfRealizations, num_snr, totalIterations, isSaveFig, isSaveData, savePath, dataPath);
 
-plotESRResults(SNR_dB, ESR_L_MMSE_all, ESR_R_MMSE_all, ESR_L_MMSE_dcc, ESR_R_MMSE_dcc, ...
+plotESRResults(SNR_dB, ESR_MR_all, ESR_L_MMSE_all, ESR_R_MMSE_all, ESR_MR_dcc, ESR_L_MMSE_dcc, ESR_R_MMSE_dcc, ...
     numScenarios, isSaveFig, savePath, isSaveData, dataPath);
