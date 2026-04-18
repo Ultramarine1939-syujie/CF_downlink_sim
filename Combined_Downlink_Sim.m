@@ -23,7 +23,7 @@ numScenarios = 3; % 场景实验次数
 nbrOfRealizations = 200; % 每个场景下的信道数
 
 % 接口：设置要展示的仿真场景数量
-numScenariosToPlot = 1; % 用户可在此修改
+numScenariosToPlot = numScenarios; % 用户可在此修改
 isSaveFig = true;       % 是否保存图像
 savePath = 'Imgs/';  % 图像保存路径
 
