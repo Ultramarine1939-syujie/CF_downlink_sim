@@ -19,7 +19,7 @@ sigma_e = 0.3;     % CSI误差
 nIter = 5;
 
 % ===== 多场景实验参数 =====
-numScenarios = 3; % 场景实验次数
+numScenarios = 1; % 场景实验次数
 nbrOfRealizations = 200; % 每个场景下的信道数
 
 % 接口：设置要展示的仿真场景数量
@@ -51,7 +51,7 @@ end
 SHOW_DETAILED_STATUS = true;    % 是否显示详细步骤
 
 % 计算总迭代次数
-totalIterations = numScenarios * num_snr * 12; % 12种算法(基线+PSO各6种)
+totalIterations = numScenarios * num_snr * 18; % 18种算法(基线+PSO+Random各6种)
 completedIterations = 0;
 
 % ========== 打印仿真配置信息 ==========
@@ -65,12 +65,22 @@ ESR_PSO_MR_all_total = zeros(num_snr,1);
 ESR_PSO_L_MMSE_all_total = zeros(num_snr,1);
 ESR_PSO_R_MMSE_all_total = zeros(num_snr,1);
 
+% Random功率分配对照实验结果存储
+ESR_Random_MR_all_total = zeros(num_snr,1);
+ESR_Random_L_MMSE_all_total = zeros(num_snr,1);
+ESR_Random_R_MMSE_all_total = zeros(num_snr,1);
+
 ESR_MR_dcc_total = zeros(num_snr,1);
 ESR_L_MMSE_dcc_total = zeros(num_snr,1);
 ESR_R_MMSE_dcc_total = zeros(num_snr,1);
 ESR_PSO_MR_dcc_total = zeros(num_snr,1);
 ESR_PSO_L_MMSE_dcc_total = zeros(num_snr,1);
 ESR_PSO_R_MMSE_dcc_total = zeros(num_snr,1);
+
+% Random功率分配对照实验结果存储 (DCC场景)
+ESR_Random_MR_dcc_total = zeros(num_snr,1);
+ESR_Random_L_MMSE_dcc_total = zeros(num_snr,1);
+ESR_Random_R_MMSE_dcc_total = zeros(num_snr,1);
 
 % PSO优化结果存储
 d_opt_all_final = zeros(K,1);
@@ -82,7 +92,7 @@ bestFitness_dcc_arr = zeros(num_snr,1);
 
 %% ================= Scenario Loop =================
 fprintf('▶ Starting main simulation loop...\n');
-fprintf('  Total scenarios: %d | SNR points: %d | Algorithms: 12 (Baseline + PSO for MR/L-MMSE/R-MMSE)\n\n', numScenarios, num_snr);
+fprintf('  Total scenarios: %d | SNR points: %d | Algorithms: 18 (Baseline + PSO + Random for MR/L-MMSE/R-MMSE)\n\n', numScenarios, num_snr);
 
 for s = 1:numScenarios
     scenarioProgress = (s - 1) / numScenarios * 100;
@@ -154,34 +164,40 @@ for s = 1:numScenarios
         
         % MR (Maximum Ratio) precoding
         [V_MR_all, scaling_MR_all] = functionPrecoding_MR(Hhat, nbrOfRealizations, N, K, L);
-        [rho_dist_all, ~, rho_PSO_MR_all] = functionComputeRho_all_dcc_pso(gainOverNoise, [], Pt, d_opt_all, scaling_MR_all, D_all);
+        [rho_dist_all, ~, rho_PSO_MR_all, rho_Random_MR_all] = functionComputeRho_all_dcc_pso(gainOverNoise, [], Pt, d_opt_all, scaling_MR_all, D_all);
         SE_MR_all = functionComputeSE_downlink_MR(H, V_MR_all, scaling_MR_all, D_all, tau_c, tau_p, nbrOfRealizations, N, K, L, rho_dist_all);
         SE_PSO_MR_all = functionComputeSE_downlink_MR(H, V_MR_all, scaling_MR_all, D_all, tau_c, tau_p, nbrOfRealizations, N, K, L, rho_PSO_MR_all);
-        
+        SE_Random_MR_all = functionComputeSE_downlink_MR(H, V_MR_all, scaling_MR_all, D_all, tau_c, tau_p, nbrOfRealizations, N, K, L, rho_Random_MR_all);
+
         [V_L_all, scaling_L_all] = functionPrecoding_LMMSE(Hhat, D_all, C, nbrOfRealizations, N, K, L, p);
-        [~,~,rho_PSO_L_all] = functionComputeRho_all_dcc_pso(gainOverNoise, [], Pt, d_opt_all, scaling_L_all, D_all);
+        [~,~,rho_PSO_L_all, rho_Random_L_all] = functionComputeRho_all_dcc_pso(gainOverNoise, [], Pt, d_opt_all, scaling_L_all, D_all);
         SE_L_all = functionComputeSE_downlink_LMMSE(Hhat,H,D_all,C,tau_c,tau_p,nbrOfRealizations,N,K,L,p,rho_dist_all);
         SE_PSO_L_all = functionComputeSE_downlink_LMMSE(Hhat,H,D_all,C,tau_c,tau_p,nbrOfRealizations,N,K,L,p,rho_PSO_L_all);
-        
+        SE_Random_L_all = functionComputeSE_downlink_LMMSE(Hhat,H,D_all,C,tau_c,tau_p,nbrOfRealizations,N,K,L,p,rho_Random_L_all);
+
         [V_R_all, scaling_R_all] = functionPrecoding_RobustMMSE(Hhat, D_all, nbrOfRealizations, N, K, L, Pt, sigma_e, nIter);
-        [~,~,rho_PSO_R_all] = functionComputeRho_all_dcc_pso(gainOverNoise, [], Pt, d_opt_all, scaling_R_all, D_all);
+        [~,~,rho_PSO_R_all, rho_Random_R_all] = functionComputeRho_all_dcc_pso(gainOverNoise, [], Pt, d_opt_all, scaling_R_all, D_all);
         SE_R_all = functionComputeSE_downlink_RobustMMSE(Hhat,H,D_all,C,tau_c,tau_p,nbrOfRealizations,N,K,L,p,rho_dist_all,sigma_e,Pt,nIter);
         SE_PSO_R_all = functionComputeSE_downlink_RobustMMSE(Hhat,H,D_all,C,tau_c,tau_p,nbrOfRealizations,N,K,L,p,rho_PSO_R_all,sigma_e,Pt,nIter);
+        SE_Random_R_all = functionComputeSE_downlink_RobustMMSE(Hhat,H,D_all,C,tau_c,tau_p,nbrOfRealizations,N,K,L,p,rho_Random_R_all,sigma_e,Pt,nIter);
         
         if SHOW_DETAILED_STATUS
-            fprintf('  │   │   ├─ MR:          SE=%.4f,     PSO+MR: %.4f\n', sum(SE_MR_all), sum(SE_PSO_MR_all));
-            fprintf('  │   │   ├─ L-MMSE:      SE=%.4f,     PSO+L-MMSE: %.4f\n', sum(SE_L_all), sum(SE_PSO_L_all));
-            fprintf('  │   │   └─ Robust-MMSE: SE=%.4f,     PSO+R-MMSE: %.4f\n', sum(SE_R_all), sum(SE_PSO_R_all));
+            fprintf('  │   │   ├─ MR:          SE=%.4f,  PSO+MR: %.4f,  Random+MR: %.4f\n', sum(SE_MR_all), sum(SE_PSO_MR_all), sum(SE_Random_MR_all));
+            fprintf('  │   │   ├─ L-MMSE:      SE=%.4f,  PSO+L-MMSE: %.4f,  Random+L-MMSE: %.4f\n', sum(SE_L_all), sum(SE_PSO_L_all), sum(SE_Random_L_all));
+            fprintf('  │   │   └─ Robust-MMSE: SE=%.4f,  PSO+R-MMSE: %.4f,  Random+R-MMSE: %.4f\n', sum(SE_R_all), sum(SE_PSO_R_all), sum(SE_Random_R_all));
             fprintf('  │   │   └─ PSO (All): Iter=%d, BestFitness=%.4f, d_opt=[%.4f, %.4f, ...]\n', ...
                 iterUsed_all, bestFitness_all, d_opt_all(1), d_opt_all(2));
         end
-        
+
         ESR_MR_all_total(snr_idx) = ESR_MR_all_total(snr_idx) + sum(SE_MR_all);
         ESR_L_MMSE_all_total(snr_idx) = ESR_L_MMSE_all_total(snr_idx) + sum(SE_L_all);
         ESR_R_MMSE_all_total(snr_idx) = ESR_R_MMSE_all_total(snr_idx) + sum(SE_R_all);
         ESR_PSO_MR_all_total(snr_idx) = ESR_PSO_MR_all_total(snr_idx) + sum(SE_PSO_MR_all);
         ESR_PSO_L_MMSE_all_total(snr_idx) = ESR_PSO_L_MMSE_all_total(snr_idx) + sum(SE_PSO_L_all);
         ESR_PSO_R_MMSE_all_total(snr_idx) = ESR_PSO_R_MMSE_all_total(snr_idx) + sum(SE_PSO_R_all);
+        ESR_Random_MR_all_total(snr_idx) = ESR_Random_MR_all_total(snr_idx) + sum(SE_Random_MR_all);
+        ESR_Random_L_MMSE_all_total(snr_idx) = ESR_Random_L_MMSE_all_total(snr_idx) + sum(SE_Random_L_all);
+        ESR_Random_R_MMSE_all_total(snr_idx) = ESR_Random_R_MMSE_all_total(snr_idx) + sum(SE_Random_R_all);
         
         % --- DCC-UE Case ---
         rho_dist_dcc = computeRhoDist(D_dcc, gainOverNoise, Pt, L, K);
@@ -202,37 +218,43 @@ for s = 1:numScenarios
         
         % MR (Maximum Ratio) precoding for DCC
         [V_MR_dcc, scaling_MR_dcc] = functionPrecoding_MR(Hhat, nbrOfRealizations, N, K, L);
-        [~, rho_dist_dcc, rho_PSO_MR_dcc] = functionComputeRho_all_dcc_pso(gainOverNoise, D_dcc, Pt, d_opt_dcc, scaling_MR_dcc, D_dcc);
+        [~, rho_dist_dcc, rho_PSO_MR_dcc, rho_Random_MR_dcc] = functionComputeRho_all_dcc_pso(gainOverNoise, D_dcc, Pt, d_opt_dcc, scaling_MR_dcc, D_dcc);
         SE_MR_dcc = functionComputeSE_downlink_MR(H, V_MR_dcc, scaling_MR_dcc, D_dcc, tau_c, tau_p, nbrOfRealizations, N, K, L, rho_dist_dcc);
         SE_PSO_MR_dcc = functionComputeSE_downlink_MR(H, V_MR_dcc, scaling_MR_dcc, D_dcc, tau_c, tau_p, nbrOfRealizations, N, K, L, rho_PSO_MR_dcc);
-        
+        SE_Random_MR_dcc = functionComputeSE_downlink_MR(H, V_MR_dcc, scaling_MR_dcc, D_dcc, tau_c, tau_p, nbrOfRealizations, N, K, L, rho_Random_MR_dcc);
+
         [V_L_dcc, scaling_L_dcc] = functionPrecoding_LMMSE(Hhat, D_dcc, C, nbrOfRealizations, N, K, L, p);
-        [~,~,rho_PSO_L_dcc] = functionComputeRho_all_dcc_pso(gainOverNoise, D_dcc, Pt, d_opt_dcc, scaling_L_dcc, D_dcc);
+        [~,~,rho_PSO_L_dcc, rho_Random_L_dcc] = functionComputeRho_all_dcc_pso(gainOverNoise, D_dcc, Pt, d_opt_dcc, scaling_L_dcc, D_dcc);
         SE_L_dcc = functionComputeSE_downlink_LMMSE(Hhat,H,D_dcc,C,tau_c,tau_p,nbrOfRealizations,N,K,L,p,rho_dist_dcc);
         SE_PSO_L_dcc = functionComputeSE_downlink_LMMSE(Hhat,H,D_dcc,C,tau_c,tau_p,nbrOfRealizations,N,K,L,p,rho_PSO_L_dcc);
-        
+        SE_Random_L_dcc = functionComputeSE_downlink_LMMSE(Hhat,H,D_dcc,C,tau_c,tau_p,nbrOfRealizations,N,K,L,p,rho_Random_L_dcc);
+
         [V_R_dcc, scaling_R_dcc] = functionPrecoding_RobustMMSE(Hhat, D_dcc, nbrOfRealizations, N, K, L, Pt, sigma_e, nIter);
-        [~,~,rho_PSO_R_dcc] = functionComputeRho_all_dcc_pso(gainOverNoise, D_dcc, Pt, d_opt_dcc, scaling_R_dcc, D_dcc);
+        [~,~,rho_PSO_R_dcc, rho_Random_R_dcc] = functionComputeRho_all_dcc_pso(gainOverNoise, D_dcc, Pt, d_opt_dcc, scaling_R_dcc, D_dcc);
         SE_R_dcc = functionComputeSE_downlink_RobustMMSE(Hhat,H,D_dcc,C,tau_c,tau_p,nbrOfRealizations,N,K,L,p,rho_dist_dcc,sigma_e,Pt,nIter);
         SE_PSO_R_dcc = functionComputeSE_downlink_RobustMMSE(Hhat,H,D_dcc,C,tau_c,tau_p,nbrOfRealizations,N,K,L,p,rho_PSO_R_dcc,sigma_e,Pt,nIter);
+        SE_Random_R_dcc = functionComputeSE_downlink_RobustMMSE(Hhat,H,D_dcc,C,tau_c,tau_p,nbrOfRealizations,N,K,L,p,rho_Random_R_dcc,sigma_e,Pt,nIter);
         
         if SHOW_DETAILED_STATUS
-            fprintf('  │       ├─ MR:          SE=%.4f,     PSO+MR: %.4f\n', sum(SE_MR_dcc), sum(SE_PSO_MR_dcc));
-            fprintf('  │       ├─ L-MMSE:      SE=%.4f,     PSO+L-MMSE: %.4f\n', sum(SE_L_dcc), sum(SE_PSO_L_dcc));
-            fprintf('  │       └─ Robust-MMSE: SE=%.4f,     PSO+R-MMSE: %.4f\n', sum(SE_R_dcc), sum(SE_PSO_R_dcc));
+            fprintf('  │       ├─ MR:          SE=%.4f,  PSO+MR: %.4f,  Random+MR: %.4f\n', sum(SE_MR_dcc), sum(SE_PSO_MR_dcc), sum(SE_Random_MR_dcc));
+            fprintf('  │       ├─ L-MMSE:      SE=%.4f,  PSO+L-MMSE: %.4f,  Random+L-MMSE: %.4f\n', sum(SE_L_dcc), sum(SE_PSO_L_dcc), sum(SE_Random_L_dcc));
+            fprintf('  │       └─ Robust-MMSE: SE=%.4f,  PSO+R-MMSE: %.4f,  Random+R-MMSE: %.4f\n', sum(SE_R_dcc), sum(SE_PSO_R_dcc), sum(SE_Random_R_dcc));
             fprintf('  │       └─ PSO (DCC): Iter=%d, BestFitness=%.4f\n', ...
                 iterUsed_dcc, bestFitness_dcc, d_opt_dcc(1), d_opt_dcc(2));
         end
-        
+
         ESR_MR_dcc_total(snr_idx) = ESR_MR_dcc_total(snr_idx) + sum(SE_MR_dcc);
         ESR_L_MMSE_dcc_total(snr_idx) = ESR_L_MMSE_dcc_total(snr_idx) + sum(SE_L_dcc);
         ESR_R_MMSE_dcc_total(snr_idx) = ESR_R_MMSE_dcc_total(snr_idx) + sum(SE_R_dcc);
         ESR_PSO_MR_dcc_total(snr_idx) = ESR_PSO_MR_dcc_total(snr_idx) + sum(SE_PSO_MR_dcc);
         ESR_PSO_L_MMSE_dcc_total(snr_idx) = ESR_PSO_L_MMSE_dcc_total(snr_idx) + sum(SE_PSO_L_dcc);
         ESR_PSO_R_MMSE_dcc_total(snr_idx) = ESR_PSO_R_MMSE_dcc_total(snr_idx) + sum(SE_PSO_R_dcc);
+        ESR_Random_MR_dcc_total(snr_idx) = ESR_Random_MR_dcc_total(snr_idx) + sum(SE_Random_MR_dcc);
+        ESR_Random_L_MMSE_dcc_total(snr_idx) = ESR_Random_L_MMSE_dcc_total(snr_idx) + sum(SE_Random_L_dcc);
+        ESR_Random_R_MMSE_dcc_total(snr_idx) = ESR_Random_R_MMSE_dcc_total(snr_idx) + sum(SE_Random_R_dcc);
         
         % 更新进度
-        completedIterations = completedIterations + 12;
+        completedIterations = completedIterations + 18;
         overallProgress = completedIterations / totalIterations * 100;
         
         % 显示进度条
@@ -259,6 +281,9 @@ ESR_R_MMSE_all = ESR_R_MMSE_all_total / numScenarios;
 ESR_PSO_MR_all = ESR_PSO_MR_all_total / numScenarios;
 ESR_PSO_L_MMSE_all = ESR_PSO_L_MMSE_all_total / numScenarios;
 ESR_PSO_R_MMSE_all = ESR_PSO_R_MMSE_all_total / numScenarios;
+ESR_Random_MR_all = ESR_Random_MR_all_total / numScenarios;
+ESR_Random_L_MMSE_all = ESR_Random_L_MMSE_all_total / numScenarios;
+ESR_Random_R_MMSE_all = ESR_Random_R_MMSE_all_total / numScenarios;
 
 ESR_MR_dcc = ESR_MR_dcc_total / numScenarios;
 ESR_L_MMSE_dcc = ESR_L_MMSE_dcc_total / numScenarios;
@@ -266,14 +291,21 @@ ESR_R_MMSE_dcc = ESR_R_MMSE_dcc_total / numScenarios;
 ESR_PSO_MR_dcc = ESR_PSO_MR_dcc_total / numScenarios;
 ESR_PSO_L_MMSE_dcc = ESR_PSO_L_MMSE_dcc_total / numScenarios;
 ESR_PSO_R_MMSE_dcc = ESR_PSO_R_MMSE_dcc_total / numScenarios;
+ESR_Random_MR_dcc = ESR_Random_MR_dcc_total / numScenarios;
+ESR_Random_L_MMSE_dcc = ESR_Random_L_MMSE_dcc_total / numScenarios;
+ESR_Random_R_MMSE_dcc = ESR_Random_R_MMSE_dcc_total / numScenarios;
 
 %% ================= Output Results =================
 printFinalResults(ESR_MR_all, ESR_L_MMSE_all, ESR_R_MMSE_all, ESR_PSO_MR_all, ESR_PSO_L_MMSE_all, ESR_PSO_R_MMSE_all, ...
     ESR_MR_dcc, ESR_L_MMSE_dcc, ESR_R_MMSE_dcc, ESR_PSO_MR_dcc, ESR_PSO_L_MMSE_dcc, ESR_PSO_R_MMSE_dcc, ...
+    ESR_Random_MR_all, ESR_Random_L_MMSE_all, ESR_Random_R_MMSE_all, ...
+    ESR_Random_MR_dcc, ESR_Random_L_MMSE_dcc, ESR_Random_R_MMSE_dcc, ...
     numScenarios, nbrOfRealizations, num_snr, totalIterations, ...
     d_opt_all_final, d_opt_dcc_final, iterUsed_all_arr, iterUsed_dcc_arr, bestFitness_all_arr, bestFitness_dcc_arr, ...
     isSaveFig, isSaveData, savePath, dataPath);
 
 plotESRResults(SNR_dB, ESR_MR_all, ESR_L_MMSE_all, ESR_R_MMSE_all, ESR_PSO_MR_all, ESR_PSO_L_MMSE_all, ESR_PSO_R_MMSE_all, ...
     ESR_MR_dcc, ESR_L_MMSE_dcc, ESR_R_MMSE_dcc, ESR_PSO_MR_dcc, ESR_PSO_L_MMSE_dcc, ESR_PSO_R_MMSE_dcc, ...
+    ESR_Random_MR_all, ESR_Random_L_MMSE_all, ESR_Random_R_MMSE_all, ...
+    ESR_Random_MR_dcc, ESR_Random_L_MMSE_dcc, ESR_Random_R_MMSE_dcc, ...
     numScenarios, isSaveFig, savePath, isSaveData, dataPath);

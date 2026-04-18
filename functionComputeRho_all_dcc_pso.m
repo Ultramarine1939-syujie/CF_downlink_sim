@@ -1,5 +1,5 @@
-function [rho_all, rho_dcc, rho_pso] = functionComputeRho_all_dcc_pso(gainOverNoise, D_dcc, Pt, d_opt, scaling_pso, D_pso)
-% functionComputeRho_all_dcc_pso 计算三种功率分配方案
+function [rho_all, rho_dcc, rho_pso, rho_random] = functionComputeRho_all_dcc_pso(gainOverNoise, D_dcc, Pt, d_opt, scaling_pso, D_pso)
+% functionComputeRho_all_dcc_pso 计算功率分配方案
 %
 % 输入参数:
 %   gainOverNoise - 大尺度增益 (L x K)
@@ -13,6 +13,7 @@ function [rho_all, rho_dcc, rho_pso] = functionComputeRho_all_dcc_pso(gainOverNo
 %   rho_all - 基于大尺度增益的功率分配 (L x K)
 %   rho_dcc - DCC约束下的功率分配 (L x K)
 %   rho_pso - PSO优化的功率分配 (L x K)
+%   rho_random - 随机功率分配 (L x K)
 
 L = size(gainOverNoise, 1);
 K = size(gainOverNoise, 2);
@@ -41,6 +42,16 @@ if nargin >= 4 && ~isempty(d_opt)
 else
     rho_pso = [];
 end
+
+% 随机功率分配作为PSO的对照实验
+if nargin >= 2 && ~isempty(D_dcc)
+    D_random = D_dcc;
+elseif nargin >= 6 && ~isempty(D_pso)
+    D_random = D_pso;
+else
+    D_random = ones(L, K);
+end
+rho_random = functionPowerControl_random(scaling_pso, D_random, Pt, K);
 end
 
 %% rho_pso 计算子函数
@@ -54,4 +65,32 @@ nonzeroAP = apPower > 0;
 eta(nonzeroAP) = sqrt(powerPerAP ./ apPower(nonzeroAP));
 
 rho_dist = (eta.^2) .* (scaling .* D) .* (d2.');
+end
+
+%% 随机功率分配函数 (PSO对照实验)
+function rho_random = functionPowerControl_random(scaling, D, Pt, K)
+% functionPowerControl_random 产生随机功率分配作为PSO的对照实验
+%
+% 输入:
+%   scaling - 预编码scaling系数 (L x K)
+%   D - 接入矩阵 (L x K)
+%   Pt - 总发射功率
+%   K - 用户数
+%
+% 输出:
+%   rho_random - 随机功率分配 (L x K)
+
+% 产生均匀分布的随机功率权重
+d_random = rand(K, 1);  % 随机值 [0, 1]
+d_random = d_random / sqrt(sum(d_random.^2));  % 归一化使得总功率约束成立
+
+d2 = d_random(:).^2; % K x 1
+powerPerAP = Pt / size(D, 1);
+
+apPower = (scaling .* D) * d2; % L x 1
+eta = zeros(size(apPower));
+nonzeroAP = apPower > 0;
+eta(nonzeroAP) = sqrt(powerPerAP ./ apPower(nonzeroAP));
+
+rho_random = (eta.^2) .* (scaling .* D) .* (d2.');
 end
