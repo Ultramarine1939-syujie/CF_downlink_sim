@@ -1,4 +1,4 @@
-function [d_opt, iterUsed, bestFitness] = functionOptimize_d_PSO(Hhat, H, D, C, tau_c, tau_p, nbrOfRealizations, N, K, L, p, Pt)
+function [d_opt, iterUsed, bestFitness] = functionOptimize_d_PSO(Hhat, H, D, C, tau_c, tau_p, nbrOfRealizations, N, K, L, p, Pt, varargin)
 % functionOptimize_d_PSO 使用粒子群优化 (PSO) 算法优化每个用户的预编码缩放系数 d_k
 % 以最大化系统的 ESR (Ergodic Sum Rate)
 %
@@ -12,11 +12,21 @@ function [d_opt, iterUsed, bestFitness] = functionOptimize_d_PSO(Hhat, H, D, C, 
 %   N, K, L - 系统维度
 %   p - 功率参数 (用于 L-MMSE 接口一致性，当前忽略)
 %   Pt - 总发射功率
+%   varargin{1} - 可选: d_baseline (K x 1)，用于在Baseline基础上微调
 %
 % 输出:
 %   d_opt - 最优功率分配向量 (K x 1)
 %   iterUsed - 实际使用的迭代次数
 %   bestFitness - 最优适应度值 (ESR)
+
+% 解析可选参数
+d_baseline_provided = false;
+if nargin >= 13 && ~isempty(varargin{1})
+    d_baseline_in = varargin{1};
+    if isvector(d_baseline_in) && length(d_baseline_in) == K
+        d_baseline_provided = true;
+    end
+end
 
 % 1. 参数设置
 numParticles = 30;    % 粒子数 (要求 20~30)
@@ -45,11 +55,22 @@ pre.D_rows = kron(D, ones(N, 1));      % (L*N) x K
 Hhat_abs2 = sum(abs(reshape(pre.Hhat_all, [N, L, K, nbrOfRealizations])).^2, 1);
 pre.E_Hhat2 = squeeze(mean(Hhat_abs2, 4)); % L x K
 
-% 随机初始化 (满足约束：d_k >= 0, sum(d_k^2) <= Pt)
+% 初始化：部分粒子用Baseline结果（加扰动），其余随机
+numBaselineParticles = 5;  % 用Baseline初始化的粒子数量
+noiseScale = 0.1;           % 扰动幅度（标准差相对于Baseline值）
+
 for i = 1:numParticles
-    tmp_d = rand(K, 1);
-    current_Pt = Pt * rand();
-    d(:, i) = tmp_d * sqrt(current_Pt / sum(tmp_d.^2));
+    if d_baseline_provided && i <= numBaselineParticles
+        % Baseline初始化 + 小扰动
+        d(:, i) = abs(d_baseline_in + d_baseline_in .* (noiseScale * randn(K, 1)));
+        % 归一化到满足功率约束
+        d(:, i) = d(:, i) * sqrt(Pt / sum(d(:, i).^2));
+    else
+        % 随机初始化 (满足约束：d_k >= 0, sum(d_k^2) <= Pt)
+        tmp_d = rand(K, 1);
+        current_Pt = Pt * rand();
+        d(:, i) = tmp_d * sqrt(current_Pt / sum(tmp_d.^2));
+    end
     v(:, i) = 0.05 * randn(K, 1);
 end
 

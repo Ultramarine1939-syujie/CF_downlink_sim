@@ -1,25 +1,20 @@
-function [V, scaling] = functionPrecoding_LMMSE(Hhat, D, C, nbrOfRealizations, N, K, L, p)
-% FUNCTIONPRECODING_LMMSE 实现 L-MMSE 预编码向量的计算
+function [V, scaling] = functionPrecoding_LMMSE_global(Hhat, D, C, nbrOfRealizations, N, K, L, p)
+% FUNCTIONPRECODING_LMMSE_GLOBAL 集中式 L-MMSE 预编码 (消融实验用)
 %
-% 输入:
-%   Hhat - 信道估计 (L*N x nbrOfRealizations x K)
-%   D - DCC 关联矩阵 (L x K)
-%   C - 协方差矩阵 (N x N x L x K)
-%   nbrOfRealizations - 信道实现数量
-%   N, K, L - 系统维度
-%   p - 功率参数
+% 与 functionPrecoding_LMMSE.m 的唯一区别:
+%   使用所有 AP 的协方差矩阵之和 (cSum = sum(C,4))，而非仅本 AP 自身的协方差。
+%   这是原始的集中式 L-MMSE 方案，用于消融实验维度 6:
+%   验证分布式改造（仅用本地协方差）带来的信息损失。
 %
-% 输出:
-%   V - 预编码向量 (L*N x K x nbrOfRealizations)，未服务用户列为 0
-%   scaling - 归一化缩放因子 (L x K)
+% 输入/输出接口与 functionPrecoding_LMMSE.m 完全一致。
 
 eyeN = eye(N);
 scaling = zeros(L, K);
 V = complex(zeros(L*N, K, nbrOfRealizations), 0);
 
 if N == 1
-    % [已向量化] N==1 时，L-MMSE 可写成逐 realization 的标量分母，避免 nbrOfRealizations 循环
-    cSum = squeeze(sum(C(1, 1, :, :), 4)); % L x 1
+    % [集中式] N==1 时，使用所有 AP 协方差之和
+    cSum = squeeze(sum(C(1,1,:,:), 4));  % L x 1（所有 AP 协方差之和）
     for l = 1:L
         rowIdx = (l-1)*N + 1;
         hhat_ln = squeeze(Hhat(rowIdx, :, :)); % nbrOfRealizations x K
@@ -32,8 +27,8 @@ if N == 1
         scaling(l, :) = mean(abs(v_ln).^2, 1);
     end
 else
-    % N>1 的通用实现：保留 (l,n) 外层循环，但消除对 K/servedUEs 的内层循环与 cell 开销
-    cSum = sum(C, 4); % N x N x L
+    % [集中式] N>1 时，使用所有 AP 协方差矩阵之和
+    cSum = sum(C, 4);  % N x N（所有 AP 协方差堆叠后求和）
     for n = 1:nbrOfRealizations
         for l = 1:L
             servedMask = (D(l, :) == 1);
@@ -42,7 +37,7 @@ else
             rows = (l-1)*N+1:l*N;
             Hhat_all = reshape(Hhat(rows, n, :), [N, K]);
 
-            A = p * (Hhat_all * Hhat_all') + p * cSum(:, :, l) + eyeN;
+            A = p * (Hhat_all * Hhat_all') + p * cSum + eyeN;
             V_full = p * (A \ Hhat_all);
             V_full(:, ~servedMask) = 0;
 

@@ -20,11 +20,17 @@ powerScale = zeros(L, K);
 validMask = (D == 1) & (scaling > 0) & (rho_dist > 0);
 powerScale(validMask) = sqrt(rho_dist(validMask) ./ scaling(validMask));
 
-powerScaleRows = kron(powerScale, ones(N, 1)); % (L*N) x K
-W = V .* reshape(powerScaleRows, L*N, K, 1);
+if N == 1
+    W = V .* reshape(powerScale, L, K, 1);
+else
+    powerScaleRows = reshape(powerScale, L, 1, K);
+    powerScaleRows = repmat(powerScaleRows, [1, N, 1]);
+    powerScaleRows = reshape(powerScaleRows, L*N, K);
+    W = V .* reshape(powerScaleRows, L*N, K, 1);
+end
 
-H_all = permute(H, [1 3 2]); % (L*N) x K x nbrOfRealizations
-G = pagemtimes(permute(conj(H_all), [2 1 3]), W); % K x K x nbrOfRealizations
+H_all = permute(H, [1 3 2]);
+G = pagemtimes(permute(conj(H_all), [2 1 3]), W);
 
 G_vec = reshape(G, K*K, nbrOfRealizations);
 diagIdx = 1:(K+1):(K*K);

@@ -1,145 +1,216 @@
-# Cell-Free 下行链路仿真 (CF Downlink Simulation)
+# CF-Downlink-Sim
 
-比较 L-MMSE 和 Robust MMSE 两种预编码在 All-UE 和 DCC-UE 两种接入模式下下行链路频谱效率（ESR）的仿真项目。
+Cell-Free 大规模 MIMO 下行链路仿真系统 - 结合图神经网络与联邦学习的分布式功率分配研究平台
 
-## 项目结构
+[![版本](https://img.shields.io/badge/version-v3.0-blue.svg)]()
+[![MATLAB](https://img.shields.io/badge/MATLAB-R2020b+-orange.svg)]()
+[![Python](https://img.shields.io/badge/Python-3.10+-green.svg)]()
+
+---
+
+## 📖 项目简介
+
+本项目研究 **Cell-Free 分布式 MIMO** 下行链路中的**低复杂度、低同步时延功率分配**问题。核心创新在于：
+
+- **GNN 本地推理**：用图神经网络学习 WMMSE 的隐式映射，每个 AP 仅用本地 CSI 即可推理功率分配
+- **联邦学习协作**：通过 FedAvg 在 AP 间协作优化，弥补分布式推理的信息损失
+- **混合架构**：MATLAB 处理信道仿真与矩阵运算，Python 处理 GNN 训练与推理
+
+```
+传统方案:                    本项目方案:
+CPU 收集全部 CSI    →      GNN 本地推理 (零通信)
+集中计算 ρ 矩阵     →      FedAvg 协作聚合
+O(L×K) 同步代价    →      O(K) 模型参数交换
+```
+
+---
+
+## 🚀 快速开始
+
+### 环境要求
+
+- **MATLAB** R2020b+ (Parallel Computing Toolbox)
+- **Python** 3.10+ (torch, torch-geometric, numpy, h5py)
+
+### 安装依赖
+
+```bash
+cd python
+pip install -r requirements.txt
+```
+
+### 运行仿真
+
+```matlab
+cd CF_downlink_sim
+run
+```
+
+### 完整流程
+
+```bash
+# 1. 导出训练数据
+matlab -batch "exportTrainingData"
+
+# 2. 训练 GNN
+python train_gnn.py --data "../data/gnn_training/*.mat" --epochs 300
+
+# 3. 联邦学习微调 (可选)
+python fedavg.py --data "../data/gnn_training/*.mat" --rounds 50
+
+# 4. 运行仿真
+matlab -batch "run"
+```
+
+详细步骤见 [docs/08. 项目运行指南.md](docs/08.%20项目运行指南.md)
+
+---
+
+## 📁 项目结构
 
 ```
 CF_downlink_sim/
-├── Combined_Downlink_Sim.m              主仿真程序：参数配置 + 仿真循环 + 调用输出函数
-├── generateSetup.m                      生成 AP/UE 分布、大尺度衰落、相关矩阵、导频分配
-├── functionChannelEstimates.m           信道估计（MMSE 估计 + 误差协方差矩阵 C）
-├── functionComputeSE_downlink_LMMSE.m   L-MMSE 预编码 SE 计算
-├── functionComputeSE_downlink_RobustMMSE.m  Robust MMSE 预编码 SE 计算
-├── functionRlocalscattering.m           局部散射模型空间相关矩阵
-├── computeRhoDist.m                     功率分配系数计算
-├── printSimConfig.m                    打印仿真配置信息表
-├── printFinalResults.m                 打印最终结果汇总表
-├── plotESRResults.m                    绘制 ESR 曲线并保存
-├── plotScenarioSetup.m                 绘制场景布局图（AP/UE 分布）
-├── Imgs/                               图像输出目录（自动创建）
-└── SimulationData/                      数据输出目录（自动创建）
+├── run.m                              # MATLAB 入口脚本
+├── main/
+│   └── Combined_Downlink_Sim.m        # v3.0 主仿真引擎
+├── channel/                           # 信道模型
+├── precoding/                         # 预编码 (已向量化优化)
+├── power_allocation/                   # 功率分配 (已并行化)
+│   ├── computeRhoDist.m               # Baseline
+│   ├── computeRhoWMMSE.m              # WMMSE
+│   ├── computeRhoGNN.m                # GNN 推理接口
+│   └── exportTrainingData.m            # 训练数据导出 (parfor)
+├── se_calculation/                    # SE 计算 (已优化)
+├── visualization/                     # 可视化
+├── config/                           # 配置管理 (v3.0)
+│   ├── getDefaultParams.m           # 统一参数
+│   └── SimulationLogger.m            # 日志系统
+├── python/                           # Python 智能模块
+│   ├── models/gnn.py                 # GAT/MLP 模型
+│   ├── data/dataset.py              # 数据集加载
+│   ├── training/train_centralized.py # 训练脚本
+│   ├── inference/                    # 推理封装
+│   ├── utils/                       # 工具函数
+│   ├── train_gnn.py                # 主训练
+│   ├── fedavg.py                   # 联邦学习
+│   └── requirements.txt              # 依赖
+├── models/                           # 训练好的 .pt 模型
+├── data/gnn_training/               # 训练数据
+└── docs/                            # 文档
 ```
 
-## 函数概览
+---
 
-### 核心仿真函数
+## 🎯 核心功能
 
-| 文件 | 描述 |
+### 算法组合 (42+ 种)
+
+| 功率分配 | 预编码 | 接入模式 |
+|---------|--------|---------|
+| Baseline, EPA, WMMSE | MR, L-MMSE, R-MMSE | All, DCC |
+| PSO, Random, **GNN**, **GNN+FL** | L-MMSE-G (消融) | |
+
+### 性能对比
+
+| 方法 | 频谱效率 | 延迟 | 通信量 |
+|------|---------|------|--------|
+| WMMSE | ⭐⭐⭐⭐⭐ | 高 | O(L×K) CSI |
+| GNN | ⭐⭐⭐⭐ | 低 | 零 |
+| GNN+FL | ⭐⭐⭐⭐⭐ | 低 | O(K) 模型 |
+
+---
+
+## 📊 v3.0 性能优化
+
+| 优化项 | 性能提升 | 说明 |
+|--------|---------|------|
+| L-MMSE 向量化 | 2-3x | 消除双层循环 |
+| 并行数据导出 | 4-8x | parfor 并行 |
+| Kronecker 消除 | 微优化 | N=1 时直接 reshape |
+| 分层缓存 | 显著加速 | 避免重复计算 |
+
+---
+
+## 📚 文档导航
+
+| 文档 | 内容 |
 |------|------|
-| `Combined_Downlink_Sim.m` | 主脚本。配置参数、运行场景×SNR 双重循环、引入 CSI 误差、累计结果、调用输出函数 |
-| `generateSetup.m` | 生成 AP/UE 随机分布、路径损耗、阴影衰落、接入矩阵 D、导频分配 |
-| `functionChannelEstimates.m` | 根据相关矩阵生成真实信道，执行上行导频估计，输出信道估计 Hhat 和误差协方差 C |
-| `functionComputeSE_downlink_LMMSE.m` | 经典 L-MMSE 预编码，计算各 UE 的 SE |
-| `functionComputeSE_downlink_RobustMMSE.m` | Robust MMSE 预编码，考虑信道估计误差 σ_e，迭代 nIter 次优化 |
+| [00. 项目概览与导航.md](docs/00.%20项目概览与导航.md) | **入口**，项目总览与快速定位 |
+| [07. 项目架构与创新点.md](docs/07.%20项目架构与创新点.md) | 系统架构、模块分工、5大创新点 |
+| [05. GNN与联邦学习混合功率分配方案.md](docs/05.%20GNN与联邦学习混合功率分配方案.md) | **核心方案**，GNN+FL 详细设计 |
+| [08. 项目运行指南.md](docs/08.%20项目运行指南.md) | 环境配置、完整流程、常见问题 |
+| [09. 消融实验设计.md](docs/09.%20消融实验设计.md) | 6维度消融实验设计 |
 
-### 辅助输出函数
+---
 
-| 文件 | 描述 |
-|------|------|
-| `computeRhoDist.m` | 根据接入矩阵 D、大尺度增益、总功率 Pt 计算功率分配系数 ρ_dist |
-| `printSimConfig.m` | 打印仿真参数配置信息表（表格形式） |
-| `printFinalResults.m` | 打印仿真完成后的性能汇总表（Min/Max ESR + 统计信息） |
-| `plotESRResults.m` | 绘制 4 条 ESR 曲线并保存为 .fig / .png，数据保存为 .mat |
-| `plotScenarioSetup.m` | 绘制 AP/UE 场景布局图并保存 |
+## 🔧 配置管理
 
-### 底层工具函数
+使用统一参数配置模块：
 
-| 文件 | 描述 |
-|------|------|
-| `functionRlocalscattering.m` | 基于局部散射模型生成空间相关矩阵 R |
-
-## 主要参数
-
-| 参数 | 默认值 | 说明 |
-|------|--------|------|
-| `L` | 100 | 接入点（AP）数量 |
-| `K` | 20 | 用户（UE）数量 |
-| `N` | 1 | 每个 AP 的天线数 |
-| `tau_c` | 200 | 相干时间符号数 |
-| `tau_p` | 10 | 导频长度 |
-| `sigma_e` | 0.3 | CSI 误差标准差 |
-| `nIter` | 5 | Robust MMSE 迭代次数 |
-| `numScenarios` | 10 | 仿真场景数（独立信道实现次数） |
-| `nbrOfRealizations` | 200 | 每场景的信道样本数 |
-| `SNR_dB` | 5:5:30 | SNR 扫描范围（dB） |
-| `numScenariosToPlot` | 1 | 需要绘制布局的场景数 |
-
-## 使用方法
-
-### 1. 环境要求
-- MATLAB R2020b 或更高版本
-
-### 2. 运行仿真
 ```matlab
-Combined_Downlink_Sim
+% 获取默认参数
+params = getDefaultParams();
+
+% 自定义参数
+params = loadParams('simulation.nbrOfRealizations', 100, ...
+                    'gnn.hidden_dim', 256);
+
+% 获取仿真配置
+config = getSimulationConfig();
 ```
 
-### 3. 配置说明
-在 `Combined_Downlink_Sim.m` 的 `Initialization` 部分修改参数：
-- 仿真规模：`numScenarios`、`nbrOfRealizations`、`SNR_dB`
-- 系统配置：`L`、`K`、`N`、`tau_c`、`tau_p`
-- Robust 参数：`sigma_e`、`nIter`
-- 输出控制：`isSaveFig`、`isSaveData`、`numScenariosToPlot`
+---
 
-### 4. 查看输出
+## 📦 模型文件
 
-**图像**（`Imgs/`）：
-- `Scenario_X_Layout.png/.fig` — 第 X 个场景的 AP/UE 布局
-- `Averaged_ESR_Results.png/.fig` — 4 种算法 ESR 对比曲线
+训练好的模型应放在 `models/` 目录：
 
-**数据**（`SimulationData/`）：
-- `Scenario_X_Positions.mat` — 各场景 AP/UE 坐标
-- `Simulation_Results_Data.mat` — 完整 ESR 数据
+- `best_gat_gnn_power.pt` - 集中式 GNN 最优模型
+- `gnn_power_fedavg.pt` - 联邦学习聚合模型
+- `ablation/` - 消融实验模型
 
-## 状态显示
+> ⚠️ 模型文件通过 `.gitignore` 忽略，不会上传到 GitHub
 
-仿真运行时显示详细进度信息：
+---
 
-```
-╔══════════════════════════════════════════════════════════════╗
-║            Downlink Simulation - Status Display              ║
-╠══════════════════════════════════════════════════════════════╣
-║  Simulation Configuration:                                   ║
-║    • Number of APs (L):         100                          ║
-║    • Number of UEs (K):         20                           ║
-║    • Scenarios:                 10                           ║
-║    • SNR range (dB):            [5 10 15 20 25 30]            ║
-╚══════════════════════════════════════════════════════════════╝
+## 🤝 贡献指南
 
-╔══════════════════════════════════════════════════════════════╗
-║  SCENARIO  1 / 10  [  0.0% ]                              ║
-╚══════════════════════════════════════════════════════════════╝
-  ┌─ [1/5] Generating scenario setup (AP/UE distribution)...
-  │   └─ Done
-  ┌─ [2/5] Performing channel estimation...
-  │   └─ Realizations: 200, Pilots: 10
-  │   └─ Done
-  ┌─ [3/5] Introducing CSI error (sigma_e = 0.30)...
-  │   └─ Done
-  ┌─ [4/5] Running SNR sweep (6 points)...
-  │   ┌─ SNR  1/ 6 (5.0 dB) - All-UE
-  │   │   ├─ L-MMSE:      SE=12.8593
-  │   │   └─ Robust-MMSE: SE=14.6987
-  │   └─ SNR  1/ 6 (5.0 dB) - DCC-UE
-  │       ├─ L-MMSE:      SE=14.0303
-  │       └─ Robust-MMSE: SE=15.9874
-  │  [============                    ]  8.3%
-  └─ SNR sweep completed
+1. Fork 本仓库
+2. 创建特性分支 (`git checkout -b feature/AmazingFeature`)
+3. 提交更改 (`git commit -m 'Add some AmazingFeature'`)
+4. 推送到分支 (`git push origin feature/AmazingFeature`)
+5. 创建 Pull Request
+
+---
+
+## 📄 许可证
+
+本项目仅供学术研究使用。
+
+---
+
+## 📎 引用
+
+如果本项目对您的研究有帮助，请引用：
+
+```bibtex
+@misc{CF_downlink_sim,
+  title = {CF-Downlink-Sim: Cell-Free MIMO Downlink Simulation with GNN and Federated Learning},
+  author = {Your Team},
+  year = {2026},
+  note = {https://github.com/your-repo/CF_downlink_sim}
+}
 ```
 
-设置 `SHOW_DETAILED_STATUS = false` 可关闭详细步骤输出。
+---
 
-## 算法说明
+## 👥 团队
 
-- **L-MMSE**：经典线性最小均方误差预编码，不考虑信道估计误差
-- **Robust MMSE**：考虑信道估计误差的鲁棒预编码，通过迭代优化提升性能
+- **核心开发**: 研究团队
+- **技术支持**: MATLAB + Python 混合架构
 
-接入模式：
-- **All-UE**：所有 AP 为所有 UE 服务（每个 AP 连接所有 UE）
-- **DCC**：分布式协作聚类接入（每个 UE 仅被部分 AP 服务，根据信道强度选择）
+---
 
-## 注意事项
-
-- 每次运行会自动清空 `Imgs/` 和 `SimulationData/` 文件夹，重要结果请预先备份
-- `plotScenarioSetup.m` 使用非交互式 figure，适合批量保存
+<p align="center">
+  <strong>CF-Downlink-Sim</strong> - 面向 6G 的 Cell-Free 分布式 MIMO 研究平台
+</p>
