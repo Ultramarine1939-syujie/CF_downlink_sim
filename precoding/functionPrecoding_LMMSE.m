@@ -19,14 +19,13 @@ V = complex(zeros(L*N, K, nbrOfRealizations), 0);
 
 if N == 1
     Hhat_sq = sum(abs(Hhat).^2, 1);
-    c_local = reshape(C(1, 1, :, :), L, K);
-    denom = p * Hhat_sq + reshape(p * c_local, 1, K, 1) + 1;
+    c_sum = reshape(sum(reshape(C(1, 1, :, :), L, K), 1), 1, 1, K);
+    denom = p * Hhat_sq + p * c_sum + 1;
     V_all = p ./ denom .* Hhat;
-    D_expanded = reshape(D, L, K, 1);
+    D_expanded = reshape(D, L, 1, K);
     V_all = V_all .* D_expanded;
-    V = reshape(V_all, L, K, nbrOfRealizations);
-    V = permute(V, [1 3 2]);
-    scaling = mean(abs(V_all).^2, 2);
+    V = permute(V_all, [1, 3, 2]);
+    scaling = reshape(mean(abs(V_all).^2, 2), L, K);
 else
     % [分布式改造] N>1 时，仅使用本AP自身的协方差矩阵，而非所有AP之和
     % 原集中式: cSum = sum(C, 4);  % N x N x L（所有AP协方差堆叠）

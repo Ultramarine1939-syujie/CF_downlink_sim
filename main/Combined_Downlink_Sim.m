@@ -30,9 +30,10 @@ isSaveData = true;               % 是否保存数据
 
 % ---------- 显示模式 ----------
 VERBOSE = true;                   % 详细输出(算法名称+ESR)
+VERBOSE_ALGO = false;             % 逐算法 ESR 详情输出
 
 % ---------- 缓存 & 阶段控制 (v3.0 新增) ----------
-runStage = 3;     % 1=仅传统方法(Baseline/EPA/PSO/WMMSE/Random)
+runStage = 2;     % 1=仅传统方法(Baseline/EPA/PSO/WMMSE/Random)
                    % 2=仅GNN推理(需已有stage1缓存)
                    % 3=全部(默认, 等价原版行为)
 useCache = true;   % 缓存总开关; false 则每次全部重算(等同v2.0)
@@ -394,6 +395,7 @@ for s = 1:numScenarios
                     pcName = pcList{ci};
                     V  = V_cells{ci};
                     sc = sc_cells{ci};
+                    SE_k = zeros(K, 1);
                     for pi = 1:numPA_trad
                         rho = pa_trad_rhos{pi};
                         switch pcName
@@ -421,7 +423,7 @@ for s = 1:numScenarios
                         ESR_k = ESR_cell_all{mi, ci, pi};
                         ESR_acc(algoIdx, snr_idx) = ESR_acc(algoIdx, snr_idx) + ESR_k;
 
-                        if VERBOSE
+                        if VERBOSE_ALGO
                             fprintf('  |   |  |  %-24s ESR=%8.3f\n', algoTable(algoIdx).name, ESR_k);
                         end
                         if ESR_k > ESR_best(snr_idx)
@@ -564,6 +566,7 @@ for s = 1:numScenarios
                         pcName = pcList{ci};
                         V  = V_cells_gnn{ci};
                         sc = sc_cells_gnn{ci};
+                        SE_k = zeros(K, 1);
                         for pi = 1:numPA_gnn
                             rho = gnn_rhos{pi};
                             switch pcName
@@ -590,7 +593,7 @@ for s = 1:numScenarios
                             ESR_k = ESR_cell_gnn{mi, ci, pi};
                             ESR_acc(algoIdx, snr_idx) = ESR_acc(algoIdx, snr_idx) + ESR_k;
 
-                            if VERBOSE
+                            if VERBOSE_ALGO
                                 fprintf('  |   |  |  %-24s ESR=%8.3f\n', algoTable(algoIdx).name, ESR_k);
                             end
                             if ESR_k > ESR_best(snr_idx)

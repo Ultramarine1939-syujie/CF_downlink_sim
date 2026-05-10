@@ -19,8 +19,10 @@ function SE = functionComputeSE_downlink_LMMSE(Hhat, H, V, scaling, D, tau_c, ta
 prelogFactor = (1 - tau_p / tau_c);
 
 powerScale = zeros(L, K);
-validMask = (D == 1) & (scaling > 0) & (rho_dist > 0);
-powerScale(validMask) = sqrt(rho_dist(validMask) ./ scaling(validMask));
+sc2d = reshape(scaling, L, K);
+rho2d = reshape(rho_dist, L, K);
+validMask = (D == 1) & (sc2d > 0) & (rho2d > 0);
+powerScale(validMask) = sqrt(rho2d(validMask) ./ sc2d(validMask));
 
 if N == 1
     powerScaleExp = reshape(powerScale, L, K, 1);
