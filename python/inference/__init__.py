@@ -28,7 +28,7 @@ class GNNInferrer:
         self.torch = torch
         self.np = np
 
-        checkpoint = torch.load(model_path, map_location=self.device)
+        checkpoint = torch.load(model_path, map_location=self.device, weights_only=False)
 
         if 'model_state_dict' in checkpoint:
             state_dict = checkpoint['model_state_dict']

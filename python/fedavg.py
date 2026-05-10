@@ -243,7 +243,7 @@ def main():
     if args.init_ckpt:
         ckpt_path = args.init_ckpt
         if os.path.isfile(ckpt_path):
-            ckpt = torch.load(ckpt_path, map_location="cpu")
+            ckpt = torch.load(ckpt_path, map_location="cpu", weights_only=False)
             if isinstance(ckpt, dict) and "model_state_dict" in ckpt:
                 global_model.load_state_dict(ckpt["model_state_dict"], strict=True)
             elif isinstance(ckpt, dict):

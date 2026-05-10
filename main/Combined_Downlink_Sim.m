@@ -506,7 +506,7 @@ for s = 1:numScenarios
                     rho_GNN_sec = nan;
                     try
                         rho_GNN_t = tic;
-                        rho_GNN = computeRhoGNN(Hhat, D, gainOverNoise, Pt, gnnLocalModelPath);
+                        rho_GNN = computeRhoGNN(Hhat, D, gainOverNoise, Pt, gnnLocalModelPath, sigma_e);
                         rho_GNN_sec = toc(rho_GNN_t);
                     catch
                         rho_GNN = rho_fallback;
@@ -516,7 +516,7 @@ for s = 1:numScenarios
                     rho_GNNFL_sec = nan;
                     try
                         rho_GNNFL_t = tic;
-                        rho_GNNFL = computeRhoGNN(Hhat, D, gainOverNoise, Pt, gnnFLModelPath);
+                        rho_GNNFL = computeRhoGNN(Hhat, D, gainOverNoise, Pt, gnnFLModelPath, sigma_e);
                         rho_GNNFL_sec = toc(rho_GNNFL_t);
                     catch
                         rho_GNNFL = rho_fallback;
@@ -527,12 +527,12 @@ for s = 1:numScenarios
                     rho_GNNGN = rho_fallback;
                     if isfile(gnnMLPModelPath)
                         try
-                            rho_GNNMLP = computeRhoGNN(Hhat, D, gainOverNoise, Pt, gnnMLPModelPath);
+                            rho_GNNMLP = computeRhoGNN(Hhat, D, gainOverNoise, Pt, gnnMLPModelPath, sigma_e);
                         catch; end
                     end
                     if isfile(gnnGlobalNormModelPath)
                         try
-                            rho_GNNGN = computeRhoGNN(Hhat, D, gainOverNoise, Pt, gnnGlobalNormModelPath);
+                            rho_GNNGN = computeRhoGNN(Hhat, D, gainOverNoise, Pt, gnnGlobalNormModelPath, sigma_e);
                         catch; end
                     end
 

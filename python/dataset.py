@@ -46,7 +46,13 @@ class GNNDataset(TorchDataset):
 
             # 读取 labels
             labels = f['labels']
-            rho_WMMSE = np.array(labels['rho_WMMSE'])  # (N, K, L) in HDF5
+            # 优先使用 rho_Dist（大尺度功率分配，与特征匹配）
+            if 'rho_Dist' in labels:
+                rho_raw = np.array(labels['rho_Dist'])
+                print("  Using rho_Dist as labels (matched with large-scale features)")
+            else:
+                rho_raw = np.array(labels['rho_WMMSE'])
+                print("  WARNING: rho_Dist not found, falling back to rho_WMMSE")
             ESR_WMMSE = np.array(labels['ESR_WMMSE']).flatten()  # (N,)
 
             # 读取 meta 信息 (结构体数组)
@@ -81,7 +87,7 @@ class GNNDataset(TorchDataset):
             print(f"WARNING: sigma_e shape {sigma_e.shape} unexpected, "
                   f"got {len(sigma_e_flat)} values for {n_snaps_raw} snapshots. Using first value.")
             self.sigma_e = np.full(n_snaps_raw, sigma_e_flat[0])
-        self.rho_raw = np.transpose(rho_WMMSE, (2, 1, 0))   # (L, K, N) 原始标签
+        self.rho_raw = np.transpose(rho_raw, (2, 1, 0))   # (L, K, N) 原始标签
         self.ESR_WMMSE = ESR_WMMSE                          # (N,)
 
         self.snrs = np.array(snrs)

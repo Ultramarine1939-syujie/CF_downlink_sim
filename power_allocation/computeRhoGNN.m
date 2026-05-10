@@ -1,12 +1,14 @@
-function rho = computeRhoGNN(Hhat, D, gainOverNoise, Pt, gnnModelPath)
+function rho = computeRhoGNN(Hhat, D, gainOverNoise, Pt, gnnModelPath, sigma_e)
     [L, K] = size(D);
     if nargin < 5 || isempty(gnnModelPath) || ~isfile(gnnModelPath)
         rho = computeRhoEPA(D, Pt, L, K);
         return;
     end
+    if nargin < 6 || isempty(sigma_e)
+        sigma_e = 0.3;
+    end
 
     sqrtGain = sqrt(max(gainOverNoise, 0));
-    sigma_e = 0.0;
 
     thisDir = fileparts(mfilename('fullpath'));
     rootDir = fileparts(thisDir);
@@ -39,7 +41,7 @@ function rho = computeRhoGNN(Hhat, D, gainOverNoise, Pt, gnnModelPath)
     if isempty(cached_train_gnn); cached_train_gnn = py.importlib.import_module('train_gnn'); end
 
     if needReload
-        ckpt = cached_torch.load(gnnModelPath, pyargs('map_location', 'cpu'));
+        ckpt = cached_torch.load(gnnModelPath, pyargs('map_location', 'cpu', 'weights_only', false));
     model_type = 'gat';  % 默认 GAT
     ckpt_keys = cellfun(@char, cell(ckpt.keys()), 'UniformOutput', false);
     if ismember('model_type', ckpt_keys)
