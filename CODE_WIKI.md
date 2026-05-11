@@ -1,6 +1,6 @@
 # CF_downlink_sim 项目 Code Wiki
 
-> Cell-Free Massive MIMO 下行链路仿真平台 — 基于 GNN+联邦学习的功率分配优化
+> Cell-Free Massive MIMO 下行链路仿真平台 — 基于 GNN 的功率分配优化
 
 ---
 
@@ -32,14 +32,14 @@
 本项目是一个 **Cell-Free Massive MIMO 下行链路仿真平台**，核心研究目标是：
 
 - 在 **分布式** 架构下（各 AP 仅需本地 CSI），设计低开销、高效率的下行链路预编码与功率分配方案
-- 提出 **GNN+FL（图神经网络+联邦学习）** 闭环功率分配方案，替代传统迭代优化算法（WMMSE、PSO 等）
-- 通过完整的消融实验验证各设计选择的合理性
+- 提出 **GNN（图神经网络）** 功率分配方案，替代传统迭代优化算法（WMMSE、PSO 等）
+- 通过实验验证 GNN 设计选择的合理性
 
 ### 研究成果
 
 - **低开销分布式预编码**：仅需本地 CSI 即可逼近全局 CSI 性能
-- **GNN+FL 功率分配**：推理速度接近 EPA，性能接近 WMMSE
-- **同步/通信开销双降**：消除 WMMSE/PSO 的 AP 间迭代同步
+- **GNN 功率分配**：推理速度接近 EPA，性能接近 WMMSE
+- **同步/通信开销降低**：消除 WMMSE/PSO 的 AP 间迭代同步
 
 ### 技术栈
 
@@ -48,7 +48,6 @@
 | 仿真核心 | MATLAB (R2024a+) |
 | 信道模型 | 3GPP TR 38.901 Indoor-Hotspot |
 | 深度学习 | Python 3.10+ / PyTorch 2.0+ / PyTorch Geometric 2.5+ |
-| 联邦学习 | FedAvg (自实现) |
 | GNN 模型 | GAT (Graph Attention Network) |
 
 ---
@@ -105,13 +104,11 @@
 │                                                                      │
 │  python/                                                             │
 │    ├── train_gnn.py              GNN 训练主脚本 (含模型定义)          │
-│    ├── train_gnn_ablation.py     消融实验主脚本                       │
 │    ├── dataset.py                数据集加载 (GNNDataset)              │
-│    ├── fedavg.py                 联邦学习 FedAvg 实现                 │
 │    ├── requirements.txt          Python 依赖                         │
 │    │                                                                    │
 │    ├── training/                  训练模块                             │
-│    │     └── train_centralized.py  集中式训练 (旧版)                   │
+│    │     └── train_centralized.py  集中式训练                         │
 │    ├── inference/                 推理模块                             │
 │    │     └── __init__.py          GNNInferrer 推理器                  │
 │    └── utils/                     工具函数                             │
@@ -175,9 +172,7 @@ CF_downlink_sim/
 │
 ├── python/                            # Python 训练框架
 │   ├── train_gnn.py                  # GNN 训练脚本 (含模型定义)
-│   ├── train_gnn_ablation.py         # 消融实验脚本
 │   ├── dataset.py                    # 数据集加载
-│   ├── fedavg.py                     # 联邦学习实现
 │   ├── requirements.txt              # Python 依赖
 │   ├── training/                     # 训练模块
 │   │   ├── __init__.py
@@ -192,11 +187,7 @@ CF_downlink_sim/
 │
 ├── models/                            # 模型输出
 │   ├── best_gat_gnn_power.pt         # 集中式 GAT 最佳模型
-│   ├── final_gat_gnn_power.pt        # 集中式 GAT 最终模型
-│   ├── gnn_power_fedavg.pt           # 联邦学习最终模型
-│   ├── gnn_power_fedavg_round*.pt    # 联邦学习各轮次模型
-│   ├── fedavg_summary.json           # 联邦学习训练摘要
-│   └── fedavg_log.csv               # 联邦学习训练日志
+│   └── final_gat_gnn_power.pt        # 集中式 GAT 最终模型
 │
 └── figures/                           # 输出图表
 ```
@@ -621,42 +612,6 @@ class GNNDatasetGlobalNorm(Dataset):
 - 随机 SNR 选择
 - 通过 `numAugment` 参数控制增强倍数
 
-#### [fedavg.py](file:///c:/Users/Admin/Documents/%E4%B8%AA%E4%BA%BA%E8%B5%84%E6%96%99/CF_downlink_sim/python/fedavg.py)
-
-**联邦学习 FedAvg 实现。**
-
-```python
-def split_dataset_to_clients(dataset, num_clients, seed, split_by):
-    """将数据集按 AP 索引分割到各客户端"""
-
-def local_train(model, loader, device, lr, local_epochs, ...):
-    """本地训练: 在客户端数据上训练模型"""
-
-def fedavg_aggregate(state_dicts, weights):
-    """FedAvg 聚合: 加权平均各客户端模型参数"""
-```
-
-**联邦学习流程：**
-1. 初始化全局模型
-2. 每轮随机选择 `frac` 比例的客户端
-3. 各客户端在本地数据上训练
-4. 加权聚合各客户端模型
-5. 在验证集上评估全局模型
-6. 重复直到收敛
-
-#### [train_gnn_ablation.py](file:///c:/Users/Admin/Documents/%E4%B8%AA%E4%BA%BA%E8%B5%84%E6%96%99/CF_downlink_sim/python/train_gnn_ablation.py)
-
-**消融实验主脚本。** 支持 6 个消融维度：
-
-| 维度 | 变体 | 说明 |
-|------|------|------|
-| 1. GNN vs No-GNN | `full` vs `mlp_only` | 图结构的作用 |
-| 2. GAT vs MLP | `full` vs `mlp_only` | 注意力机制的作用 |
-| 3. FedAvg vs Central | `full` vs `fedavg_full` | 联邦学习 vs 集中式 |
-| 4. 归一化策略 | `full` vs `global_norm` | Per-sample vs Global |
-| 5. 数据增强 | `full` vs `no_augment` | 增强的作用 |
-| 6. L-MMSE 重构 | MATLAB 端 | 全局协方差 vs 本地协方差 |
-
 #### [__init__.py (inference)](file:///c:/Users/Admin/Documents/%E4%B8%AA%E4%BA%BA%E8%B5%84%E6%96%99/CF_downlink_sim/python/inference/__init__.py)
 
 **GNN 推理器。** 供 MATLAB 调用的推理接口。
@@ -787,11 +742,6 @@ data/gnn_training/*.mat
     │
     ▼
 PowerGNN_GAT 训练
-    │
-    ├── FedAvg 联邦学习
-    │   ├── split_dataset_to_clients
-    │   ├── local_train
-    │   └── fedavg_aggregate
     │
     ▼
 models/*.pt (训练好的模型)
@@ -983,10 +933,6 @@ Combined_Downlink_Sim(params)
 | `--dropout` | 0.1 | Dropout 比例 |
 | `--val_split` | 0.15 | 验证集比例 |
 | `--patience` | 50 | 早停耐心值 |
-| `--fedavg_rounds` | 50 | FedAvg 轮数 |
-| `--fedavg_frac` | 0.2 | FedAvg 客户端选择比例 |
-| `--fedavg_local_epochs` | 1 | FedAvg 本地训练轮数 |
-| `--fedavg_lr` | 5e-4 | FedAvg 学习率 |
 
 ---
 
@@ -1011,7 +957,6 @@ Combined_Downlink_Sim(params)
 | PSO | O(nParticles × iter) | AP 间同步 | 迭代优化 |
 | WMMSE | O(iter × LK²) | AP 间同步 | 迭代优化 |
 | GNN | O(forward) | 无 | 推理快速 |
-| GNN+FL | O(forward) | 无 | 联邦学习 |
 
 ### 9.3 接入模式
 
