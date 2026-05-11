@@ -47,8 +47,8 @@
 |------|------|
 | 仿真核心 | MATLAB (R2024a+) |
 | 信道模型 | 3GPP TR 38.901 Indoor-Hotspot |
-| 深度学习 | Python 3.10+ / PyTorch 2.0+ / PyTorch Geometric 2.5+ |
-| GNN 模型 | GAT (Graph Attention Network) |
+| 深度学习 | Python 3.10+ / PyTorch 2.0+ |
+| GNN 模型 | SP-MDGNN (Sparse Multi-Dimensional GNN) |
 
 ---
 
@@ -103,16 +103,14 @@
 │                       Python 训练层                                   │
 │                                                                      │
 │  python/                                                             │
-│    ├── train_gnn.py              GNN 训练主脚本 (含模型定义)          │
-│    ├── dataset.py                数据集加载 (GNNDataset)              │
-│    ├── requirements.txt          Python 依赖                         │
-│    │                                                                    │
-│    ├── training/                  训练模块                             │
-│    │     └── train_centralized.py  集中式训练                         │
-│    ├── inference/                 推理模块                             │
-│    │     └── __init__.py          GNNInferrer 推理器                  │
-│    └── utils/                     工具函数                             │
-│          └── __init__.py          MetricTracker 等工具                │
+│    ├── train_sp_mdgnn.py        SP-MDGNN 训练主脚本                  │
+│    ├── models.py                模型定义 (SP-MDGNN, GLP-GNN-Lite)    │
+│    ├── dataset.py               数据集加载 (GNNDataset)               │
+│    ├── requirements.txt         Python 依赖                          │
+│    ├── inference/               推理模块                             │
+│    │     └── __init__.py       SPMDGNNInferrer 推理器               │
+│    └── utils/                   工具函数                             │
+│          └── __init__.py       MetricTracker 等工具                 │
 │                                                                      │
 │  模型输出: models/*.pt                                                │
 └──────────────────────────────────────────────────────────────────────┘
@@ -171,16 +169,14 @@ CF_downlink_sim/
 │   └── printFinalResults_v2.m        # 结果汇总打印 (v2)
 │
 ├── python/                            # Python 训练框架
-│   ├── train_gnn.py                  # GNN 训练脚本 (含模型定义)
-│   ├── dataset.py                    # 数据集加载
-│   ├── requirements.txt              # Python 依赖
-│   ├── training/                     # 训练模块
-│   │   ├── __init__.py
-│   │   └── train_centralized.py      # 集中式训练
-│   ├── inference/                    # 推理模块
-│   │   └── __init__.py              # GNNInferrer 推理器
-│   └── utils/                        # 工具模块
-│       └── __init__.py              # 工具函数
+│   ├── train_sp_mdgnn.py          # SP-MDGNN 训练脚本
+│   ├── models.py                    # 模型定义
+│   ├── dataset.py                   # 数据集加载
+│   ├── requirements.txt             # Python 依赖
+│   ├── inference/                   # 推理模块
+│   │   └── __init__.py           # SPMDGNNInferrer
+│   └── utils/                       # 工具模块
+│       └── __init__.py             # 工具函数
 │
 ├── data/                              # 数据目录
 │   └── gnn_training/                 # GNN 训练数据 (.mat)
@@ -537,54 +533,42 @@ v2 版本改进：
 
 ---
 
-### 4.8 python — GNN/FL 训练框架
+### 4.8 python — SP-MDGNN 训练框架
 
-#### [train_gnn.py](file:///c:/Users/Admin/Documents/%E4%B8%AA%E4%BA%BA%E8%B5%84%E6%96%99/CF_downlink_sim/python/train_gnn.py)
+#### [models.py](file:///workspace/python/models.py)
 
-**GNN 训练主脚本。** 包含模型定义和训练逻辑。
-
-**模型架构：**
+**SP-MDGNN 模型定义。**
 
 ```python
-class PowerGNN_GAT(nn.Module):
+class SP_MDGNN(nn.Module):
     """
-    GAT-GNN 功率分配模型 v3
+    SP-MDGNN: Sparse Multi-Dimensional Graph Neural Network
 
+    基于论文 arXiv:2507.01876
     架构:
-    - 输入: AP 特征 (L×1) + UE 特征 (K×3) + 边特征 (4)
-    - GAT 层: 3 层 GATConv, 每层 4 头注意力
-    - 输出: AP 预测头 → (L×K) 功率分配矩阵
-
-    关键设计:
-    - 动态 output_scale (根据实际标签范围自动设置)
-    - AP 预测头带残差连接
-    - Xavier 初始化
-    - SNR 条件嵌入
+    - 可学习稀疏邻接矩阵 (learnable W + sigmoid + threshold τ)
+    - 多维消息传递 (4 种聚合操作)
+    - 联合功率 + 预编码输出头
     """
 
-class PowerGNN_MLP(nn.Module):
+class GLP_GNN_Lite(nn.Module):
     """
-    MLP baseline — 无图结构, 无注意力机制
-
-    用于消融实验, 与 PowerGNN_GAT 参数量可比
+    GLP-GNN Lite: 简化版联合功率与预编码网络
     """
 ```
 
-**图构建：**
-- **节点类型**：AP 节点 (L 个) + UE 节点 (K 个)
-- **AP 节点特征**：`sqrt(gainOverNoise)` (1 维)
-- **UE 节点特征**：`sqrt(gainOverNoise)^T` + `sigma_e` (3 维)
-- **边连接**：AP-UE 关联矩阵 D 中的非零元素
-- **边特征**：`(gain_ap, gain_ue, D_mask, sigma_e)` (4 维)
+#### [train_sp_mdgnn.py](file:///workspace/python/train_sp_mdgnn.py)
+
+**SP-MDGNN 训练主脚本。**
 
 **训练配置：**
 - 优化器：AdamW (lr=1e-4, weight_decay=5e-4)
 - 学习率调度：OneCycleLR (max_lr=1e-3, warmup=10%)
 - 损失函数：Huber Loss (delta=0.5)，仅在 `rho_is_nonzero=1` 的位置计算
 - 早停：patience=50 epochs
-- 评估指标：Val MSE, Val Correlation, Val NZ-MSE
+- 稀疏阈值：τ=0.5 (可调)
 
-#### [dataset.py](file:///c:/Users/Admin/Documents/%E4%B8%AA%E4%BA%BA%E8%B5%84%E6%96%99/CF_downlink_sim/python/dataset.py)
+#### [dataset.py](file:///workspace/python/dataset.py)
 
 **数据集加载模块。**
 
@@ -602,38 +586,19 @@ class GNNDataset(Dataset):
     - 非零值: signed-log + min-max → [-1, 1]
     - 零值: 保持为 0
     """
-
-class GNNDatasetGlobalNorm(Dataset):
-    """全局归一化版本 (用于消融实验)"""
 ```
 
-**数据增强：**
-- 随机 UE 索引排列（保持信道结构不变）
-- 随机 SNR 选择
-- 通过 `numAugment` 参数控制增强倍数
+#### [__init__.py (inference)](file:///workspace/python/inference/__init__.py)
 
-#### [__init__.py (inference)](file:///c:/Users/Admin/Documents/%E4%B8%AA%E4%BA%BA%E8%B5%84%E6%96%99/CF_downlink_sim/python/inference/__init__.py)
-
-**GNN 推理器。** 供 MATLAB 调用的推理接口。
+**SP-MDGNN 推理器。** 供 MATLAB 调用的推理接口。
 
 ```python
-class GNNInferrer:
+class SPMDGNNInferrer:
     def __init__(self, model_path, L=100, K=20, ...):
         """加载模型权重"""
 
     def infer(self, sqrt_gain, D_mask, sigma_e, Pt):
-        """
-        执行推理
-
-        Args:
-            sqrt_gain: (L, K) sqrt(gainOverNoise)
-            D_mask: (L, K) AP-UE 关联矩阵
-            sigma_e: CSI 误差标准差
-            Pt: 总发射功率
-
-        Returns:
-            rho: (L, K) 功率分配系数
-        """
+        """执行推理，返回功率分配系数 rho: (L, K)"""
 ```
 
 ---
@@ -665,21 +630,14 @@ class GNNInferrer:
 
 | 类/函数 | 文件 | 说明 |
 |---------|------|------|
-| `PowerGNN_GAT` | python/train_gnn.py | GAT-GNN 功率分配模型 |
-| `PowerGNN_MLP` | python/train_gnn.py | MLP baseline 模型 |
+| `SP_MDGNN` | python/models.py | SP-MDGNN 模型 |
+| `GLP_GNN_Lite` | python/models.py | GLP-GNN-Lite 模型 |
 | `GNNDataset` | python/dataset.py | GNN 训练数据集 |
-| `GNNDatasetGlobalNorm` | python/dataset.py | 全局归一化数据集 |
-| `custom_collate` | python/train_gnn.py | GAT 批处理 collate 函数 |
-| `custom_collate_mlp` | python/train_gnn.py | MLP 批处理 collate 函数 |
-| `compute_loss` | python/train_gnn.py | Huber Loss (非零 rho mask) |
-| `train_epoch` | python/train_gnn.py | GAT 训练一个 epoch |
-| `evaluate` | python/train_gnn.py | GAT 模型评估 |
-| `GNNInferrer` | python/inference/__init__.py | GNN 推理器 |
-| `set_seed` | python/fedavg.py | 随机种子设置 |
-| `split_dataset_to_clients` | python/fedavg.py | 数据集分割 |
-| `local_train` | python/fedavg.py | 本地训练 |
-| `fedavg_aggregate` | python/fedavg.py | FedAvg 参数聚合 |
-| `MetricTracker` | python/utils/__init__.py | 指标追踪器 |
+| `custom_collate` | python/train_sp_mdgnn.py | 批处理 collate 函数 |
+| `compute_loss` | python/train_sp_mdgnn.py | Huber Loss |
+| `train_epoch` | python/train_sp_mdgnn.py | 训练一个 epoch |
+| `evaluate` | python/train_sp_mdgnn.py | 模型评估 |
+| `SPMDGNNInferrer` | python/inference/__init__.py | SP-MDGNN 推理器 |
 
 ---
 
@@ -746,7 +704,7 @@ PowerGNN_GAT 训练
     ▼
 models/*.pt (训练好的模型)
     │
-    ├── GNNInferrer 加载
+    ├── SPMDGNNInferrer 加载
     │
     ▼
 computeRhoGNN.m (通过 pyrunfile 调用)
@@ -843,31 +801,28 @@ addpath(genpath(pwd))
 exportTrainingData(fullfile(pwd, 'data', 'gnn_training'), 2)
 ```
 
-### 7.5 训练 GNN 模型
+### 7.5 训练 SP-MDGNN 模型
 
 ```bash
 cd python
 
-# 集中式训练 (GAT)
-python train_gnn.py --data "../data/gnn_training/*.mat" --epochs 300
+# SP-MDGNN 训练
+python train_sp_mdgnn.py --data "../data/gnn_training/*.mat" --epochs 300
 
-# 联邦学习训练
-python fedavg.py --data "../data/gnn_training/*.mat" --epochs 300
+# GLP-GNN-Lite 训练
+python train_sp_mdgnn.py --model_type glp_lite --data "../data/gnn_training/*.mat" --epochs 300
 
-# 消融实验
-python train_gnn_ablation.py --ablation all --data "../data/gnn_training/*.mat"
-
-# 快速测试
-python train_gnn_ablation.py --ablation gnn_vs_nognn --epochs 10
+# 调整稀疏阈值
+python train_sp_mdgnn.py --tau 0.3 --data "../data/gnn_training/*.mat"
 ```
 
-### 7.6 运行 GNN 推理
+### 7.6 运行 SP-MDGNN 推理
 
 ```bash
 cd python
 
 # 测试推理
-python inference/__init__.py --model ../models/best_gat_gnn_power.pt --L 100 --K 20
+python inference/__init__.py --model ../models/best_sp_mdgnn_power.pt --L 100 --K 20
 ```
 
 ### 7.7 自定义参数运行
@@ -928,8 +883,8 @@ Combined_Downlink_Sim(params)
 | `--batch_size` | 32 | 批大小 |
 | `--lr_max` | 1e-3 | 最大学习率 (OneCycleLR) |
 | `--hidden_dim` | 128 | 隐藏层维度 |
-| `--num_heads` | 4 | GAT 注意力头数 |
-| `--num_layers` | 3 | GAT 层数 |
+| `--num_layers` | 3 | MDGNN 层数 |
+| `--tau` | 0.5 | 稀疏阈值 |
 | `--dropout` | 0.1 | Dropout 比例 |
 | `--val_split` | 0.15 | 验证集比例 |
 | `--patience` | 50 | 早停耐心值 |

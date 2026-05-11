@@ -1,7 +1,7 @@
 """
 推理模块
 
-提供模型推理功能，用于 MATLAB 调用
+提供 SP-MDGNN 模型推理功能，用于 MATLAB 调用
 """
 
 import os
@@ -13,20 +13,17 @@ import torch
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from models import PowerGNN_GAT, PowerGNN_MLP
-from data import GNNDataset, custom_collate
+from models import SP_MDGNN, GLP_GNN_Lite
 
 
-class GNNInferrer:
-    """GNN 模型推理器"""
+class SPMDGNNInferrer:
+    """SP-MDGNN 模型推理器"""
 
-    def __init__(self, model_path, L=100, K=20, hidden_dim=128, num_heads=4, num_layers=3):
+    def __init__(self, model_path, L=100, K=20, hidden_dim=128, num_layers=3, tau=0.5):
         self.L = L
         self.K = K
         self.device = torch.device('cpu')
-
-        self.torch = torch
-        self.np = np
+        self.tau = tau
 
         checkpoint = torch.load(model_path, map_location=self.device, weights_only=False)
 
@@ -35,18 +32,17 @@ class GNNInferrer:
         else:
             state_dict = checkpoint
 
-        model_type = checkpoint.get('model_type', 'gat')
+        model_type = checkpoint.get('model_type', 'sp_mdgnn')
 
-        if model_type == 'mlp':
-            self.model = PowerGNN_MLP(
+        if model_type == 'glp_lite':
+            self.model = GLP_GNN_Lite(
                 L=L, K=K, hidden_dim=hidden_dim,
-                num_layers=num_layers, dropout=0.1, output_scale=1.0
+                num_layers=num_layers, tau=tau, dropout=0.1, output_scale=1.0
             )
         else:
-            self.model = PowerGNN_GAT(
+            self.model = SP_MDGNN(
                 L=L, K=K, hidden_dim=hidden_dim,
-                num_heads=num_heads, num_layers=num_layers,
-                dropout=0.1, output_scale=1.0
+                num_layers=num_layers, tau=tau, dropout=0.1, output_scale=1.0
             )
 
         self.model.load_state_dict(state_dict)
@@ -77,35 +73,26 @@ class GNNInferrer:
         y_dummy = torch.zeros(1, self.L, self.K)
         rho_is_nonzero_dummy = torch.zeros(1, self.L, self.K)
 
-        D = D_mask.numpy() if isinstance(D_mask, torch.Tensor) else D_mask
-        src_ap, ue_dst = np.where(D == 1)
-        edge_index = np.array([
-            src_ap,
-            ue_dst + self.L
-        ])
-
-        from torch_geometric.data import Data, Batch
-        data = Data(
-            x=torch.cat([x_ap, x_ue], dim=1).squeeze(0),
-            edge_index=torch.LongTensor(edge_index),
-            D_mask=D_mask_t.squeeze(0),
-            rho_is_nonzero=rho_is_nonzero_dummy.squeeze(0),
-            y=y_dummy.squeeze(0),
-            esr=torch.FloatTensor([0.0]),
-            snr=torch.FloatTensor([10.0])
-        )
-        batch = Batch.from_data_list([data])
+        batch = {
+            'x_ap': x_ap,
+            'x_ue': x_ue,
+            'D_mask': D_mask_t,
+            'rho_is_nonzero': rho_is_nonzero_dummy,
+            'y': y_dummy,
+            'esr': torch.FloatTensor([[0.0]]),
+            'snr': torch.FloatTensor([[10.0]])
+        }
 
         with torch.no_grad():
-            rho_pred = self.model(batch)
-            rho_np = rho_pred.squeeze(0).numpy()
+            outputs = self.model(batch)
+            rho_np = outputs['power'].squeeze(0).numpy()
 
         weights = np.maximum((rho_np + 1.0) / 2.0, 0.0)
-        weights = weights * D
+        weights = weights * D_mask
 
         rho = np.zeros((self.L, self.K))
         for l in range(self.L):
-            served = np.where(D[l, :] > 0.5)[0]
+            served = np.where(D_mask[l, :] > 0.5)[0]
             if len(served) == 0:
                 continue
             w = weights[l, served]
@@ -120,17 +107,17 @@ class GNNInferrer:
 
 def create_inferrer(model_path, L=100, K=20):
     """工厂函数：创建推理器"""
-    return GNNInferrer(model_path, L=L, K=K)
+    return SPMDGNNInferrer(model_path, L=L, K=K)
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description='Test GNN inference')
+    parser = argparse.ArgumentParser(description='Test SP-MDGNN inference')
     parser.add_argument('--model', type=str, required=True)
     parser.add_argument('--L', type=int, default=100)
     parser.add_argument('--K', type=int, default=20)
     args = parser.parse_args()
 
-    inferrer = GNNInferrer(args.model, L=args.L, K=args.K)
+    inferrer = SPMDGNNInferrer(args.model, L=args.L, K=args.K)
 
     sqrt_gain = np.random.randn(args.L, args.K)
     D_mask = (np.random.rand(args.L, args.K) > 0.8).astype(float)
