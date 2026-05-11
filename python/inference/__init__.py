@@ -1,7 +1,7 @@
 """
 推理模块
 
-提供模型推理功能，用于 MATLAB 调用
+提供GLP-GNN模型推理功能，用于MATLAB调用
 """
 
 import os
@@ -13,20 +13,23 @@ import torch
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from models import PowerGNN_GAT, PowerGNN_MLP
-from data import GNNDataset, custom_collate
+from glp_gnn import GLPGNN, GLPGNN_Slim
 
 
-class GNNInferrer:
-    """GNN 模型推理器"""
+class GLPInferrer:
+    """GLP-GNN模型推理器"""
 
-    def __init__(self, model_path, L=100, K=20, hidden_dim=128, num_heads=4, num_layers=3):
+    def __init__(self, model_path, L=100, K=20, hidden_dim=128, num_heads=4, 
+                 num_layers=3, num_propagations=3, alpha=0.5, model_type='full'):
         self.L = L
         self.K = K
+        self.hidden_dim = hidden_dim
+        self.num_heads = num_heads
+        self.num_layers = num_layers
+        self.num_propagations = num_propagations
+        self.alpha = alpha
+        self.model_type = model_type
         self.device = torch.device('cpu')
-
-        self.torch = torch
-        self.np = np
 
         checkpoint = torch.load(model_path, map_location=self.device, weights_only=False)
 
@@ -35,18 +38,17 @@ class GNNInferrer:
         else:
             state_dict = checkpoint
 
-        model_type = checkpoint.get('model_type', 'gat')
-
-        if model_type == 'mlp':
-            self.model = PowerGNN_MLP(
+        if model_type == 'slim':
+            self.model = GLPGNN_Slim(
                 L=L, K=K, hidden_dim=hidden_dim,
-                num_layers=num_layers, dropout=0.1, output_scale=1.0
+                num_layers=num_layers, dropout=0.1
             )
         else:
-            self.model = PowerGNN_GAT(
+            self.model = GLPGNN(
                 L=L, K=K, hidden_dim=hidden_dim,
                 num_heads=num_heads, num_layers=num_layers,
-                dropout=0.1, output_scale=1.0
+                num_propagations=num_propagations, alpha=alpha,
+                dropout=0.1
             )
 
         self.model.load_state_dict(state_dict)
@@ -118,19 +120,27 @@ class GNNInferrer:
         return rho
 
 
-def create_inferrer(model_path, L=100, K=20):
-    """工厂函数：创建推理器"""
-    return GNNInferrer(model_path, L=L, K=K)
+def create_inferrer(model_path, L=100, K=20, hidden_dim=128, num_heads=4,
+                    num_layers=3, num_propagations=3, alpha=0.5, model_type='full'):
+    """工厂函数：创建GLP-GNN推理器"""
+    return GLPInferrer(
+        model_path, L=L, K=K, hidden_dim=hidden_dim,
+        num_heads=num_heads, num_layers=num_layers,
+        num_propagations=num_propagations, alpha=alpha,
+        model_type=model_type
+    )
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description='Test GNN inference')
+    parser = argparse.ArgumentParser(description='Test GLP-GNN inference')
     parser.add_argument('--model', type=str, required=True)
     parser.add_argument('--L', type=int, default=100)
     parser.add_argument('--K', type=int, default=20)
+    parser.add_argument('--model_type', type=str, default='full',
+                       choices=['full', 'slim'])
     args = parser.parse_args()
 
-    inferrer = GNNInferrer(args.model, L=args.L, K=args.K)
+    inferrer = GLPInferrer(args.model, L=args.L, K=args.K, model_type=args.model_type)
 
     sqrt_gain = np.random.randn(args.L, args.K)
     D_mask = (np.random.rand(args.L, args.K) > 0.8).astype(float)
