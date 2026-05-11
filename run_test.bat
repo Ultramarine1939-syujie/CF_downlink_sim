@@ -13,12 +13,12 @@ echo           CF_downlink_sim Automated Test Script
 echo ============================================================
 echo.
 echo   [1] Quick Test Mode (Recommended for first run)
-echo       - 10 snapshots/SNR, 20 epochs, 5 FL rounds
+echo       - 10 snapshots/SNR, 20 epochs
 echo       - Estimated time: 10-20 minutes
 echo       - Purpose: Quick validation of GNN effectiveness
 echo.
 echo   [2] Full Run Mode
-echo       - 100 snapshots/SNR, 100 epochs, 30 FL rounds
+echo       - 100 snapshots/SNR, 100 epochs
 echo       - Estimated time: 1-2 hours
 echo       - Purpose: Generate paper-quality results
 echo.
@@ -40,17 +40,14 @@ if /i "%MODE%"=="q" exit /b 0
 
 set SNAPSHOTS_PER_SNR=100
 set GNN_EPOCHS=100
-set FEDAVG_ROUNDS=30
 set SKIP_DATA_GEN=0
 set SKIP_GNN_TRAIN=0
-set SKIP_FEDAVG=0
 
 if "%MODE%"=="1" (
     echo.
     echo [Selected] Quick Test Mode
     set SNAPSHOTS_PER_SNR=10
     set GNN_EPOCHS=20
-    set FEDAVG_ROUNDS=5
     goto :start
 )
 
@@ -68,8 +65,6 @@ if "%MODE%"=="3" (
     if "!SNAPSHOTS_PER_SNR!"=="" set SNAPSHOTS_PER_SNR=100
     set /p GNN_EPOCHS="GNN training epochs [default 100]: "
     if "!GNN_EPOCHS!"=="" set GNN_EPOCHS=100
-    set /p FEDAVG_ROUNDS="FedAvg rounds [default 30]: "
-    if "!FEDAVG_ROUNDS!"=="" set FEDAVG_ROUNDS=30
     goto :start
 )
 
@@ -78,7 +73,6 @@ if "%MODE%"=="4" (
     echo [Selected] Simulation Only Mode
     set SKIP_DATA_GEN=1
     set SKIP_GNN_TRAIN=1
-    set SKIP_FEDAVG=1
     goto :start
 )
 
@@ -93,10 +87,8 @@ echo   Run Parameters
 echo ============================================================
 echo   Snapshots/SNR:  %SNAPSHOTS_PER_SNR%
 echo   GNN epochs:     %GNN_EPOCHS%
-echo   FedAvg rounds:  %FEDAVG_ROUNDS%
 echo   Skip data gen:  %SKIP_DATA_GEN%
 echo   Skip GNN train: %SKIP_GNN_TRAIN%
-echo   Skip FedAvg:    %SKIP_FEDAVG%
 echo ============================================================
 echo.
 
@@ -119,7 +111,7 @@ if %SKIP_DATA_GEN%==1 (
 
 echo.
 echo ============================================================
-echo   [Step 1/4] Generating training dataset
+echo   [Step 1/3] Generating training dataset
 echo ============================================================
 echo.
 
@@ -146,7 +138,7 @@ if %SKIP_GNN_TRAIN%==1 (
 
 echo.
 echo ============================================================
-echo   [Step 2/4] Training GNN model
+echo   [Step 2/3] Training GNN model
 echo ============================================================
 echo.
 
@@ -178,44 +170,9 @@ echo [OK] GNN training completed
 echo.
 
 :step3
-if %SKIP_FEDAVG%==1 (
-    echo.
-    echo [SKIP] Step 3: FedAvg skipped
-    goto :step4
-)
-
 echo.
 echo ============================================================
-echo   [Step 3/4] Federated learning fine-tuning
-echo ============================================================
-echo.
-
-cd /d "%PYTHON_DIR%"
-
-set GNN_MODEL=%MODELS_DIR%\best_gat_gnn_power.pt
-if not exist "%GNN_MODEL%" (
-    echo [WARN] GNN model not found, skipping FedAvg
-    goto :step4
-)
-
-echo Using GNN model: %GNN_MODEL%
-echo.
-
-python fedavg.py --data "%LATEST_DATA%" --rounds %FEDAVG_ROUNDS% --init_ckpt "%GNN_MODEL%" --output_dir "%MODELS_DIR%"
-
-if %ERRORLEVEL% neq 0 (
-    echo.
-    echo [WARN] FedAvg failed, continuing with simulation...
-)
-
-echo.
-echo [OK] FedAvg completed
-echo.
-
-:step4
-echo.
-echo ============================================================
-echo   [Step 4/4] Running Cell-Free simulation
+echo   [Step 3/3] Running Cell-Free simulation
 echo ============================================================
 echo.
 
