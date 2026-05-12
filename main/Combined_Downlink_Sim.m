@@ -177,7 +177,7 @@ scenarioFP = buildParamFingerprint(L, K, N, tau_p, tau_c, ASD_varphi, ASD_theta,
     nbrOfRealizations, sigma_e, p, nIter, NaN);
 snrFPs = buildSNRFingerprints(L, K, N, tau_p, tau_c, ASD_varphi, ASD_theta, ...
     nbrOfRealizations, sigma_e, p, nIter, SNR_dB);
-snrCacheVersion = '_v6_timing_split_python_runtime';
+snrCacheVersion = '_v8_standard_wmmse_stable';
 for fpIdx = 1:numel(snrFPs)
     snrFPs(fpIdx).fp = [snrFPs(fpIdx).fp snrCacheVersion];
 end
