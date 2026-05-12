@@ -1,289 +1,199 @@
 function plotESRResults_v2(ESR_mean, ESR_best, ESR_best_algo, algoTable, SNR_dB, ...
     numScenarios, isSaveFig, savePath, isSaveData, dataPath, Perf)
 
-[numAlgos, num_snr] = size(ESR_mean);
-algoNames = {algoTable.name};
-algoPAs   = {algoTable.pa};
-algoPCs   = {algoTable.pc};
+%PLOTESRRESULTS_V2 Plot current simulation results.
+% The plots intentionally use exact PA identifiers from algoTable.pa, so
+% methods cannot be mixed by substring matching.
+
+[~, num_snr] = size(ESR_mean);
+algoPAs = {algoTable.pa};
+algoPCs = {algoTable.pc};
 algoModes = {algoTable.mode};
 
-C_GNNFL = [0.93 0.69 0.13];
-C_GNN   = [0.45 0.0  0.75];
-C_WMMSE = [0.85 0.15 0.15];
-C_PSO   = [0.0  0.45 0.75];
-C_EPA   = [0.0  0.6  0.0];
-C_BL    = [0.5  0.5  0.5];
-LW_PROP = 2.5;
-LW_BASE = 1.8;
+paOrder = {'GNN', 'WMMSE', 'PSO', 'EPA', 'random', 'baseline'};
+paLabels = {'GNN', 'WMMSE', 'PSO', 'EPA', 'Random', 'Baseline'};
+paColors = [
+    0.45 0.00 0.75
+    0.85 0.15 0.15
+    0.00 0.45 0.75
+    0.00 0.60 0.00
+    0.55 0.55 0.55
+    0.20 0.20 0.20
+];
+paMarkers = {'o', 's', '^', 'd', 'v', 'p'};
+
 FS_AXIS = 12;
 FS_TITLE = 13;
 FS_LEG = 10;
-MARKERS = {'o', 's', '^', 'd', 'v', 'p'};
+LW_GNN = 2.8;
+LW_BASE = 1.8;
 
-%% ===== Fig 1: GNN vs Traditional Methods ESR Curves =====
-figure('Visible', 'off', 'Position', [100 100 900 550]);
-
-paTargets = {'GNN+FL', 'GNN', 'WMMSE', 'PSO', 'EPA', 'Baseline'};
-paColors  = {C_GNNFL, C_GNN, C_WMMSE, C_PSO, C_EPA, C_BL};
-paLines   = {'-', '-', '-', '-', '-', '--'};
-paLW      = [LW_PROP, LW_PROP, LW_BASE, LW_BASE, LW_BASE, LW_BASE];
-paMarkers = {MARKERS{1}, MARKERS{2}, MARKERS{3}, MARKERS{4}, MARKERS{5}, MARKERS{6}};
-legendLabels = {};
-hold on;
-
-for pi = 1:length(paTargets)
-    paName = paTargets{pi};
-    bestIdx = getBestPC(ESR_mean, algoTable, paName, 'All');
-    if isempty(bestIdx)
-        bestIdx = getBestPC(ESR_mean, algoTable, paName, 'DCC');
-    end
-    if isempty(bestIdx); continue; end
-
-    plot(SNR_dB, ESR_mean(bestIdx, :), [paLines{pi} paMarkers{pi}], ...
-        'Color', paColors{pi}, 'LineWidth', paLW(pi), 'MarkerSize', 7);
-
-    label = paName;
-    if pi <= 2; label = [label, ' (Proposed)']; end
-    legendLabels{end+1} = label; %#ok<AGROW>
+if isSaveFig && ~exist(savePath, 'dir')
+    mkdir(savePath);
 end
 
-legend(legendLabels, 'Location', 'SouthEast', 'FontSize', FS_LEG);
+%% Fig 1: Best PC per PA, DCC mode preferred for current GNN deployment
+fig1 = figure('Visible', 'off', 'Position', [100 100 950 560]);
+hold on;
+legendLabels = {};
+for pi = 1:numel(paOrder)
+    idx = getBestCurve(ESR_mean, algoTable, paOrder{pi}, 'DCC');
+    if isempty(idx)
+        idx = getBestCurve(ESR_mean, algoTable, paOrder{pi}, 'All');
+    end
+    if isempty(idx); continue; end
+    lw = LW_BASE;
+    if strcmp(paOrder{pi}, 'GNN'); lw = LW_GNN; end
+    plot(SNR_dB, ESR_mean(idx, :), ['-' paMarkers{pi}], ...
+        'Color', paColors(pi, :), 'LineWidth', lw, 'MarkerSize', 7);
+    legendLabels{end+1} = sprintf('%s + %s (%s)', paLabels{pi}, ...
+        displayPC(algoPCs{idx}), algoModes{idx}); %#ok<AGROW>
+end
 xlabel('SNR (dB)', 'FontSize', FS_AXIS);
 ylabel('Ergodic Sum Rate (bit/s/Hz)', 'FontSize', FS_AXIS);
-title('GNN vs Traditional Power Allocation Methods', 'FontSize', FS_TITLE);
-grid on; box on;
-set(gca, 'FontSize', FS_AXIS);
+title('Best Precoder per Power Allocation Method', 'FontSize', FS_TITLE);
+legend(legendLabels, 'Location', 'SouthEast', 'FontSize', FS_LEG);
+grid on; box on; set(gca, 'FontSize', FS_AXIS);
+saveFigure(fig1, savePath, isSaveFig, 'Fig1_Best_PA_ESR');
 
-if isSaveFig
-    saveas(gcf, fullfile(savePath, 'Fig1_GNN_vs_Traditional_ESR.png'));
-    saveas(gcf, fullfile(savePath, 'Fig1_GNN_vs_Traditional_ESR.fig'));
-end
-
-%% ===== Fig 2: GNN Performance Gain Analysis =====
-figure('Visible', 'off', 'Position', [100 100 900 600]);
-
-wmmseIdx = getBestPC(ESR_mean, algoTable, 'WMMSE', 'All');
-gnnflIdx = getBestPC(ESR_mean, algoTable, 'GNN+FL', 'All');
-gnnIdx   = getBestPC(ESR_mean, algoTable, 'GNN', 'All');
-
-if isempty(wmmseIdx)
-    wmmseIdx = getBestPC(ESR_mean, algoTable, 'WMMSE', 'DCC');
-end
-if isempty(gnnflIdx)
-    gnnflIdx = getBestPC(ESR_mean, algoTable, 'GNN+FL', 'DCC');
-end
-if isempty(gnnIdx)
-    gnnIdx = getBestPC(ESR_mean, algoTable, 'GNN', 'DCC');
-end
-
-snrLabels = arrayfun(@(s) sprintf('%g dB', s), SNR_dB, 'UniformOutput', false);
-
-subplot(2, 1, 1);
-if ~isempty(gnnflIdx) && ~isempty(wmmseIdx)
-    gain_gnnfl = (ESR_mean(gnnflIdx, :) - ESR_mean(wmmseIdx, :)) ./ ESR_mean(wmmseIdx, :) * 100;
-    barColors = repmat(C_GNNFL, num_snr, 1);
-    negMask = gain_gnnfl < 0;
-    if any(negMask); barColors(negMask, :) = repmat([0.85 0.15 0.15], sum(negMask), 1); end
-
-    b = bar(SNR_dB, gain_gnnfl, 0.6);
-    b.FaceColor = 'flat';
-    b.CData = barColors;
-    hold on;
-    yline(0, 'k--', 'LineWidth', 1);
-    for si = 1:num_snr
-        txt = sprintf('%+.1f%%', gain_gnnfl(si));
-        yPos = gain_gnnfl(si);
-        if yPos >= 0; va = 'bottom'; else; va = 'top'; end
-        text(SNR_dB(si), yPos, txt, 'HorizontalAlignment', 'center', ...
-            'VerticalAlignment', va, 'FontSize', 9, 'FontWeight', 'bold');
+%% Fig 2: Same precoder comparison for R-MMSE, the strongest practical PC here
+fig2 = figure('Visible', 'off', 'Position', [100 100 950 560]);
+hold on;
+legendLabels = {};
+fixedPC = 'RMMSE';
+for pi = 1:numel(paOrder)
+    idx = findExact(algoTable, paOrder{pi}, fixedPC, 'DCC');
+    if isempty(idx)
+        idx = findExact(algoTable, paOrder{pi}, fixedPC, 'All');
     end
-    ylabel('ESR Gain (%)');
-    title('GNN+FL vs WMMSE', 'FontSize', FS_TITLE);
-    grid on; box on;
-    set(gca, 'FontSize', FS_AXIS);
-else
-    text(0.5, 0.5, 'Insufficient data', 'Units', 'normalized', 'HorizontalAlignment', 'center');
+    if isempty(idx); continue; end
+    lw = LW_BASE;
+    if strcmp(paOrder{pi}, 'GNN'); lw = LW_GNN; end
+    plot(SNR_dB, ESR_mean(idx, :), ['-' paMarkers{pi}], ...
+        'Color', paColors(pi, :), 'LineWidth', lw, 'MarkerSize', 7);
+    legendLabels{end+1} = sprintf('%s (%s)', paLabels{pi}, algoModes{idx}); %#ok<AGROW>
 end
+xlabel('SNR (dB)', 'FontSize', FS_AXIS);
+ylabel('Ergodic Sum Rate (bit/s/Hz)', 'FontSize', FS_AXIS);
+title('Power Allocation Comparison with R-MMSE Precoding', 'FontSize', FS_TITLE);
+legend(legendLabels, 'Location', 'SouthEast', 'FontSize', FS_LEG);
+grid on; box on; set(gca, 'FontSize', FS_AXIS);
+saveFigure(fig2, savePath, isSaveFig, 'Fig2_RMMSE_PA_Comparison');
 
-subplot(2, 1, 2);
-if ~isempty(gnnIdx) && ~isempty(wmmseIdx)
-    gain_gnn = (ESR_mean(gnnIdx, :) - ESR_mean(wmmseIdx, :)) ./ ESR_mean(wmmseIdx, :) * 100;
-    barColors = repmat(C_GNN, num_snr, 1);
-    negMask = gain_gnn < 0;
-    if any(negMask); barColors(negMask, :) = repmat([0.85 0.15 0.15], sum(negMask), 1); end
-
-    b = bar(SNR_dB, gain_gnn, 0.6);
+%% Fig 3: GNN gap to WMMSE under the same PC/mode
+fig3 = figure('Visible', 'off', 'Position', [100 100 900 560]);
+gnnIdx = findExact(algoTable, 'GNN', fixedPC, 'DCC');
+wmmseIdx = findExact(algoTable, 'WMMSE', fixedPC, 'DCC');
+if isempty(gnnIdx) || isempty(wmmseIdx)
+    text(0.5, 0.5, 'GNN/WMMSE R-MMSE DCC results unavailable', ...
+        'Units', 'normalized', 'HorizontalAlignment', 'center', 'FontSize', FS_AXIS);
+else
+    gapPct = (ESR_mean(gnnIdx, :) - ESR_mean(wmmseIdx, :)) ./ max(ESR_mean(wmmseIdx, :), eps) * 100;
+    b = bar(SNR_dB, gapPct, 0.58);
     b.FaceColor = 'flat';
-    b.CData = barColors;
-    hold on;
-    yline(0, 'k--', 'LineWidth', 1);
+    b.CData = repmat(paColors(1, :), num_snr, 1);
+    neg = gapPct < 0;
+    b.CData(neg, :) = repmat([0.85 0.15 0.15], sum(neg), 1);
+    hold on; yline(0, 'k--', 'LineWidth', 1);
     for si = 1:num_snr
-        txt = sprintf('%+.1f%%', gain_gnn(si));
-        yPos = gain_gnn(si);
-        if yPos >= 0; va = 'bottom'; else; va = 'top'; end
-        text(SNR_dB(si), yPos, txt, 'HorizontalAlignment', 'center', ...
-            'VerticalAlignment', va, 'FontSize', 9, 'FontWeight', 'bold');
+        if gapPct(si) >= 0; va = 'bottom'; else; va = 'top'; end
+        text(SNR_dB(si), gapPct(si), sprintf('%+.1f%%', gapPct(si)), ...
+            'HorizontalAlignment', 'center', 'VerticalAlignment', va, ...
+            'FontSize', 9, 'FontWeight', 'bold');
     end
     xlabel('SNR (dB)', 'FontSize', FS_AXIS);
-    ylabel('ESR Gain (%)');
-    title('GNN vs WMMSE', 'FontSize', FS_TITLE);
-    grid on; box on;
-    set(gca, 'FontSize', FS_AXIS);
-else
-    text(0.5, 0.5, 'Insufficient data', 'Units', 'normalized', 'HorizontalAlignment', 'center');
+    ylabel('ESR Gap to WMMSE (%)', 'FontSize', FS_AXIS);
+    title('GNN Gap to WMMSE (R-MMSE, DCC)', 'FontSize', FS_TITLE);
+    grid on; box on; set(gca, 'FontSize', FS_AXIS);
 end
+saveFigure(fig3, savePath, isSaveFig, 'Fig3_GNN_WMMSE_Gap');
 
-if isSaveFig
-    saveas(gcf, fullfile(savePath, 'Fig2_GNN_Gain_Analysis.png'));
-    saveas(gcf, fullfile(savePath, 'Fig2_GNN_Gain_Analysis.fig'));
+%% Fig 4: Compact method summary
+fig4 = figure('Visible', 'off', 'Position', [100 100 980 430]);
+ax = axes('Position', [0.03 0.08 0.94 0.84]); %#ok<LAXES>
+axis off; xlim([0 1]); ylim([0 1]);
+
+headers = {'PA', 'Best PC', 'Mode', 'Avg ESR', 'vs WMMSE', 'Notes'};
+colX = [0.03, 0.17, 0.31, 0.45, 0.60, 0.75];
+rowY = 0.84;
+rowH = 0.115;
+for ci = 1:numel(headers)
+    text(colX(ci), 0.94, headers{ci}, 'FontWeight', 'bold', 'FontSize', 11);
 end
+line([0.02 0.98], [0.90 0.90], 'Color', [0.25 0.25 0.25], 'LineWidth', 1.2);
 
-%% ===== Fig 3: All vs DCC Access Mode Comparison =====
-figure('Visible', 'off', 'Position', [100 100 1100 800]);
+wmmseBestIdx = getBestCurve(ESR_mean, algoTable, 'WMMSE', 'DCC');
+if isempty(wmmseBestIdx); wmmseBestIdx = getBestCurve(ESR_mean, algoTable, 'WMMSE', 'All'); end
+wmmseAvg = mean(ESR_mean(wmmseBestIdx, :));
 
-paCompare = {'GNN+FL', 'GNN', 'WMMSE', 'EPA'};
-paColorsC = {C_GNNFL, C_GNN, C_WMMSE, C_EPA};
+notes = containers.Map(paOrder, {'learned power split', 'iterative reference', ...
+    'heuristic optimizer', 'equal power', 'random baseline', 'large-scale baseline'});
 
-subplot(2, 2, 1);
-hold on;
-for pi = 1:length(paCompare)
-    idx = getBestPC(ESR_mean, algoTable, paCompare{pi}, 'All');
+for pi = 1:numel(paOrder)
+    idx = getBestCurve(ESR_mean, algoTable, paOrder{pi}, 'DCC');
+    if isempty(idx); idx = getBestCurve(ESR_mean, algoTable, paOrder{pi}, 'All'); end
     if isempty(idx); continue; end
-    lw = LW_PROP; if pi > 2; lw = LW_BASE; end
-    plot(SNR_dB, ESR_mean(idx, :), ['-' MARKERS{pi}], ...
-        'Color', paColorsC{pi}, 'LineWidth', lw, 'MarkerSize', 7);
-end
-legend(paCompare, 'Location', 'SouthEast', 'FontSize', FS_LEG);
-xlabel('SNR (dB)'); ylabel('Ergodic Sum Rate (bit/s/Hz)');
-title('All APs Mode', 'FontSize', FS_TITLE);
-grid on; box on; set(gca, 'FontSize', FS_AXIS);
-
-subplot(2, 2, 2);
-hold on;
-for pi = 1:length(paCompare)
-    idx = getBestPC(ESR_mean, algoTable, paCompare{pi}, 'DCC');
-    if isempty(idx); continue; end
-    lw = LW_PROP; if pi > 2; lw = LW_BASE; end
-    plot(SNR_dB, ESR_mean(idx, :), ['-' MARKERS{pi}], ...
-        'Color', paColorsC{pi}, 'LineWidth', lw, 'MarkerSize', 7);
-end
-legend(paCompare, 'Location', 'SouthEast', 'FontSize', FS_LEG);
-xlabel('SNR (dB)'); ylabel('Ergodic Sum Rate (bit/s/Hz)');
-title('DCC Mode', 'FontSize', FS_TITLE);
-grid on; box on; set(gca, 'FontSize', FS_AXIS);
-
-fixedSNR = 25;
-snrSel = find(SNR_dB == fixedSNR, 1);
-if isempty(snrSel); snrSel = num_snr; fixedSNR = SNR_dB(end); end
-
-subplot(2, 2, 3);
-esrAll = zeros(length(paCompare), 1);
-for pi = 1:length(paCompare)
-    idx = getBestPC(ESR_mean, algoTable, paCompare{pi}, 'All');
-    if ~isempty(idx); esrAll(pi) = ESR_mean(idx, snrSel); end
-end
-b = bar(esrAll, 0.6);
-b.FaceColor = 'flat';
-b.CData = cell2mat(paColorsC');
-set(gca, 'XTickLabel', paCompare, 'FontSize', 10);
-ylabel('ESR (bit/s/Hz)');
-title(sprintf('All Mode @ SNR=%d dB', fixedSNR), 'FontSize', FS_TITLE);
-grid on; box on; set(gca, 'FontSize', FS_AXIS);
-
-subplot(2, 2, 4);
-esrDCC = zeros(length(paCompare), 1);
-for pi = 1:length(paCompare)
-    idx = getBestPC(ESR_mean, algoTable, paCompare{pi}, 'DCC');
-    if ~isempty(idx); esrDCC(pi) = ESR_mean(idx, snrSel); end
-end
-b = bar(esrDCC, 0.6);
-b.FaceColor = 'flat';
-b.CData = cell2mat(paColorsC');
-set(gca, 'XTickLabel', paCompare, 'FontSize', 10);
-ylabel('ESR (bit/s/Hz)');
-title(sprintf('DCC Mode @ SNR=%d dB', fixedSNR), 'FontSize', FS_TITLE);
-grid on; box on; set(gca, 'FontSize', FS_AXIS);
-
-if isSaveFig
-    saveas(gcf, fullfile(savePath, 'Fig3_All_vs_DCC_Comparison.png'));
-    saveas(gcf, fullfile(savePath, 'Fig3_All_vs_DCC_Comparison.fig'));
-end
-
-%% ===== Fig 4: Comprehensive Performance Summary Table =====
-fig4 = figure('Visible', 'off', 'Position', [100 100 950 420]);
-ax = axes('Position', [0.02 0.05 0.96 0.88]);
-axis off;
-xlim([0 1]); ylim([0 1]);
-
-baselineIdx = getBestPC(ESR_mean, algoTable, 'Baseline', 'All');
-if isempty(baselineIdx); baselineIdx = getBestPC(ESR_mean, algoTable, 'Baseline', 'DCC'); end
-wmmseIdx = getBestPC(ESR_mean, algoTable, 'WMMSE', 'All');
-if isempty(wmmseIdx); wmmseIdx = getBestPC(ESR_mean, algoTable, 'WMMSE', 'DCC'); end
-
-if ~isempty(baselineIdx); baselineESR = mean(ESR_mean(baselineIdx, :)); else; baselineESR = 0; end
-if ~isempty(wmmseIdx); wmmseESR = mean(ESR_mean(wmmseIdx, :)); else; wmmseESR = 0; end
-
-paSummary = {'GNN+FL', 'GNN', 'WMMSE', 'PSO', 'EPA', 'Baseline'};
-complexityLabels = {'O(forward)', 'O(forward)', 'O(iter*LK^2)', 'O(nPart*iter)', 'O(LK)', 'O(LK)'};
-
-colX = [0.02, 0.18, 0.34, 0.50, 0.66, 0.82];
-headers = {'PA Method', 'Best PC', 'Avg ESR', 'vs Baseline', 'vs WMMSE', 'Complexity'};
-headerY = 0.92;
-rowH = 0.12;
-rowStartY = 0.80;
-
-for ri = 1:2
-    rowY = rowStartY - (ri - 1) * rowH;
-    patch([0, 1, 1, 0], [rowY - rowH*0.4, rowY - rowH*0.4, rowY + rowH*0.6, rowY + rowH*0.6], ...
-        [1.0 0.97 0.85], 'EdgeColor', 'none');
-end
-
-for ci = 1:length(headers)
-    text(colX(ci), headerY, headers{ci}, 'FontWeight', 'bold', 'FontSize', 11);
-end
-line([0 1], [headerY - 0.04 headerY - 0.04], 'LineWidth', 1.5, 'Color', [0.3 0.3 0.3]);
-
-for ri = 1:length(paSummary)
-    paName = paSummary{ri};
-    bestIdx = getBestPC(ESR_mean, algoTable, paName, 'All');
-    if isempty(bestIdx); bestIdx = getBestPC(ESR_mean, algoTable, paName, 'DCC'); end
-
-    rowY = rowStartY - (ri - 1) * rowH;
-
-    text(colX(1), rowY, paName, 'FontSize', 10, 'FontWeight', 'bold');
-
-    if ~isempty(bestIdx)
-        bestPC = algoPCs{bestIdx};
-        avgE = mean(ESR_mean(bestIdx, :));
-        vsBL = avgE - baselineESR;
-        vsWM = avgE - wmmseESR;
-        pctBL = vsBL / max(baselineESR, eps) * 100;
-
-        text(colX(2), rowY, bestPC, 'FontSize', 10);
-        text(colX(3), rowY, sprintf('%.2f', avgE), 'FontSize', 10);
-
-        if ri == length(paSummary)
-            text(colX(4), rowY, '--', 'FontSize', 10);
-            text(colX(5), rowY, sprintf('%+.2f', vsWM), 'FontSize', 10);
-        else
-            text(colX(4), rowY, sprintf('%+.1f%%', pctBL), 'FontSize', 10);
-            text(colX(5), rowY, sprintf('%+.2f', vsWM), 'FontSize', 10);
-        end
-    else
-        text(colX(3), rowY, 'N/A', 'FontSize', 10);
+    if pi == 1
+        patch([0.01 0.99 0.99 0.01], [rowY - 0.035 rowY - 0.035 rowY + 0.055 rowY + 0.055], ...
+            [0.96 0.92 1.00], 'EdgeColor', 'none');
     end
-
-    text(colX(6), rowY, complexityLabels{ri}, 'FontSize', 10);
+    avgE = mean(ESR_mean(idx, :));
+    text(colX(1), rowY, paLabels{pi}, 'FontSize', 10, 'FontWeight', 'bold');
+    text(colX(2), rowY, displayPC(algoPCs{idx}), 'FontSize', 10);
+    text(colX(3), rowY, algoModes{idx}, 'FontSize', 10);
+    text(colX(4), rowY, sprintf('%.2f', avgE), 'FontSize', 10);
+    text(colX(5), rowY, sprintf('%+.2f', avgE - wmmseAvg), 'FontSize', 10);
+    text(colX(6), rowY, notes(paOrder{pi}), 'FontSize', 10);
+    rowY = rowY - rowH;
 end
+title('Current Method Summary', 'FontSize', FS_TITLE);
+saveFigure(fig4, savePath, isSaveFig, 'Fig4_Method_Summary');
 
-title('Comprehensive Performance Summary', 'FontSize', FS_TITLE);
+%% Fig 5: WMMSE vs GNN timing, split by end-to-end and core compute
+fig5 = figure('Visible', 'off', 'Position', [100 100 1120 720]);
+if nargin < 11 || isempty(Perf) || ~isfield(Perf, 'time_pa_sec') || ~isfield(Perf, 'methodNames')
+    text(0.5, 0.5, 'Timing data unavailable', ...
+        'Units', 'normalized', 'HorizontalAlignment', 'center', 'FontSize', FS_AXIS);
+else
+    wIdx = find(strcmp(Perf.methodNames, 'WMMSE'), 1);
+    gIdx = find(strcmp(Perf.methodNames, 'GNN'), 1);
+    if isempty(wIdx) || isempty(gIdx)
+        text(0.5, 0.5, 'WMMSE/GNN timing rows unavailable', ...
+            'Units', 'normalized', 'HorizontalAlignment', 'center', 'FontSize', FS_AXIS);
+    else
+        wmmseE2E = max(squeeze(mean(Perf.time_pa_sec(wIdx, :, :), 3)), eps);
+        gnnE2E = max(squeeze(mean(Perf.time_pa_sec(gIdx, :, :), 3)), eps);
+        wmmseE2E = wmmseE2E(:).';
+        gnnE2E = gnnE2E(:).';
 
-if isSaveFig
-    saveas(gcf, fullfile(savePath, 'Fig4_Performance_Summary.png'));
-    saveas(gcf, fullfile(savePath, 'Fig4_Performance_Summary.fig'));
+        if isfield(Perf, 'time_core_sec')
+            wmmseCore = max(squeeze(mean(Perf.time_core_sec(wIdx, :, :), 3)), eps);
+            gnnCore = max(squeeze(mean(Perf.time_core_sec(gIdx, :, :), 3)), eps);
+        else
+            wmmseCore = wmmseE2E;
+            gnnCore = gnnE2E;
+        end
+        wmmseCore = wmmseCore(:).';
+        gnnCore = gnnCore(:).';
+
+        tiledlayout(2, 2, 'TileSpacing', 'compact', 'Padding', 'compact');
+        plotTimePair(SNR_dB, wmmseE2E, gnnE2E, paColors, FS_AXIS, FS_TITLE, FS_LEG, ...
+            'End-to-End PA Time', 'Includes MATLAB-Python Bridge');
+        plotSpeedup(SNR_dB, wmmseE2E ./ gnnE2E, paColors, num_snr, FS_AXIS, FS_TITLE, ...
+            'End-to-End Speedup');
+        plotTimePair(SNR_dB, wmmseCore, gnnCore, paColors, FS_AXIS, FS_TITLE, FS_LEG, ...
+            'Core Compute Time', 'WMMSE loop vs GNN forward');
+        plotSpeedup(SNR_dB, wmmseCore ./ gnnCore, paColors, num_snr, FS_AXIS, FS_TITLE, ...
+            'Core Compute Speedup');
+
+        sgtitle(sprintf('WMMSE vs GNN Timing: E2E %.3f/%.3f ms, Core %.3f/%.3f ms', ...
+            mean(wmmseE2E) * 1000, mean(gnnE2E) * 1000, ...
+            mean(wmmseCore) * 1000, mean(gnnCore) * 1000), 'FontSize', FS_TITLE);
+    end
 end
+saveFigure(fig5, savePath, isSaveFig, 'Fig5_Time_Overhead_Comparison');
 
-%% ===== Save Data =====
+%% Save data
 if isSaveData
     if ~exist(dataPath, 'dir'); mkdir(dataPath); end
     save(fullfile(dataPath, 'Simulation_Results_v2.mat'), ...
@@ -291,22 +201,77 @@ if isSaveData
     fprintf('[INFO] Simulation results saved to: %s\n', fullfile(dataPath, 'Simulation_Results_v2.mat'));
 end
 
-fprintf('[INFO] 4 figures generated successfully.\n');
+fprintf('[INFO] 5 figures generated successfully.\n');
 end
 
-%% ===== Helper Functions =====
-function bestIdx = getBestPC(ESR_mean, algoTable, paKeyword, modeKeyword)
-algoNames = {algoTable.name};
+function idx = findExact(algoTable, paKey, pcKey, modeKey)
+algoPAs = {algoTable.pa};
+algoPCs = {algoTable.pc};
 algoModes = {algoTable.mode};
-
-mask = cellfun(@(x, m) contains(x, paKeyword) && strcmp(m, modeKeyword), algoNames, algoModes);
-if ~any(mask)
-    mask = cellfun(@(x) contains(x, paKeyword), algoNames);
+idx = find(strcmp(algoPAs, paKey) & strcmp(algoPCs, pcKey) & strcmp(algoModes, modeKey), 1);
 end
-if ~any(mask); bestIdx = []; return; end
 
-idxList = find(mask);
-avgE = mean(ESR_mean(idxList, :), 2);
-[~, relBest] = max(avgE);
+function bestIdx = getBestCurve(ESR_mean, algoTable, paKey, modeKey)
+algoPAs = {algoTable.pa};
+algoModes = {algoTable.mode};
+idxList = find(strcmp(algoPAs, paKey) & strcmp(algoModes, modeKey));
+if isempty(idxList)
+    idxList = find(strcmp(algoPAs, paKey));
+end
+if isempty(idxList); bestIdx = []; return; end
+[~, relBest] = max(mean(ESR_mean(idxList, :), 2));
 bestIdx = idxList(relBest);
+end
+
+function label = displayPC(pcKey)
+switch pcKey
+    case 'LMMSE'
+        label = 'L-MMSE';
+    case 'RMMSE'
+        label = 'R-MMSE';
+    case 'LMMSE_G'
+        label = 'L-MMSE-G';
+    otherwise
+        label = pcKey;
+end
+end
+
+function plotTimePair(SNR_dB, wmmseTime, gnnTime, paColors, FS_AXIS, FS_TITLE, FS_LEG, titleText, subText)
+nexttile;
+semilogy(SNR_dB, wmmseTime * 1000, '-s', ...
+    'Color', paColors(2, :), 'LineWidth', 2.2, 'MarkerSize', 7);
+hold on;
+semilogy(SNR_dB, gnnTime * 1000, '-o', ...
+    'Color', paColors(1, :), 'LineWidth', 2.8, 'MarkerSize', 7);
+xlabel('SNR (dB)', 'FontSize', FS_AXIS);
+ylabel('Time (ms)', 'FontSize', FS_AXIS);
+title({titleText, subText}, 'FontSize', FS_TITLE);
+legend({'WMMSE', 'GNN'}, 'Location', 'best', 'FontSize', FS_LEG);
+grid on; box on; set(gca, 'FontSize', FS_AXIS);
+end
+
+function plotSpeedup(SNR_dB, speedup, paColors, num_snr, FS_AXIS, FS_TITLE, titleText)
+nexttile;
+b = bar(SNR_dB, speedup, 0.58);
+b.FaceColor = 'flat';
+b.CData = repmat(paColors(1, :), num_snr, 1);
+slower = speedup < 1;
+b.CData(slower, :) = repmat([0.85 0.15 0.15], sum(slower), 1);
+hold on; yline(1, 'k--', 'LineWidth', 1);
+for si = 1:num_snr
+    if speedup(si) >= 1; va = 'bottom'; else; va = 'top'; end
+    text(SNR_dB(si), speedup(si), sprintf('%.2fx', speedup(si)), ...
+        'HorizontalAlignment', 'center', 'VerticalAlignment', va, ...
+        'FontSize', 9, 'FontWeight', 'bold');
+end
+xlabel('SNR (dB)', 'FontSize', FS_AXIS);
+ylabel('WMMSE / GNN Time', 'FontSize', FS_AXIS);
+title(titleText, 'FontSize', FS_TITLE);
+grid on; box on; set(gca, 'FontSize', FS_AXIS);
+end
+
+function saveFigure(fig, savePath, isSaveFig, baseName)
+if ~isSaveFig; return; end
+saveas(fig, fullfile(savePath, [baseName '.png']));
+saveas(fig, fullfile(savePath, [baseName '.fig']));
 end

@@ -4,6 +4,19 @@ import h5py
 import numpy as np
 import sys
 
+def as_lkn(arr, L, K):
+    """Normalize MATLAB v7.3/HDF5 arrays to (L, K, N_snap)."""
+    arr = np.asarray(arr)
+    if arr.ndim != 3:
+        return arr
+    if arr.shape[0] == L and arr.shape[1] == K:
+        return arr
+    if arr.shape[1] == K and arr.shape[2] == L:
+        return np.transpose(arr, (2, 1, 0))
+    if arr.shape[0] == K and arr.shape[1] == L:
+        return np.transpose(arr, (1, 0, 2))
+    return arr
+
 def validate_dataset(mat_path):
     print(f"Loading: {mat_path}")
 
@@ -67,12 +80,12 @@ def validate_dataset(mat_path):
         N_snaps_expected = len(SNR_dB_range) * nSnapshotsPerSNR * 2  # All + DCC
 
         # Get dimensions
-        sqrtGain = np.array(features['sqrtGain'])
-        D = np.array(features['D'])
+        sqrtGain = as_lkn(np.array(features['sqrtGain']), L, K)
+        D = as_lkn(np.array(features['D']), L, K)
         sigma_e = np.array(features['sigma_e'])
-        rho_WMMSE = np.array(labels['rho_WMMSE'])
-        rho_Dist = np.array(labels['rho_Dist'])
-        rho_EPA = np.array(labels['rho_EPA'])
+        rho_WMMSE = as_lkn(np.array(labels['rho_WMMSE']), L, K)
+        rho_Dist = as_lkn(np.array(labels['rho_Dist']), L, K)
+        rho_EPA = as_lkn(np.array(labels['rho_EPA']), L, K)
         ESR_WMMSE = np.array(labels['ESR_WMMSE']).flatten()
         ESR_Dist = np.array(labels['ESR_Dist']).flatten()
         ESR_EPA = np.array(labels['ESR_EPA']).flatten()
@@ -101,8 +114,8 @@ def validate_dataset(mat_path):
             errors.append(f"sqrtGain dimension error: {sqrtGain.shape} vs expected ({L}, {K}, {N_snaps})")
         if D.shape != (L, K, N_snaps):
             errors.append(f"D dimension error: {D.shape} vs expected ({L}, {K}, {N_snaps})")
-        if sigma_e.shape != (1, 1, N_snaps):
-            errors.append(f"sigma_e dimension error: {sigma_e.shape} vs expected (1, 1, {N_snaps})")
+        if sigma_e.size != N_snaps:
+            errors.append(f"sigma_e dimension error: {sigma_e.shape} has {sigma_e.size} values vs expected {N_snaps}")
         if rho_WMMSE.shape != (L, K, N_snaps):
             errors.append(f"rho_WMMSE dimension error: {rho_WMMSE.shape} vs expected ({L}, {K}, {N_snaps})")
         if ESR_WMMSE.shape != (N_snaps,):

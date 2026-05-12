@@ -60,15 +60,6 @@ params.gnn.val_split = 0.15;
 params.gnn.patience = 50;
 params.gnn.output_scale = 1.0;
 
-params.fedavg = struct();
-params.fedavg.rounds = 50;
-params.fedavg.frac = 0.2;
-params.fedavg.local_epochs = 1;
-params.fedavg.lr = 5e-4;
-params.fedavg.weight_decay = 5e-4;
-params.fedavg.num_clients = 0;
-params.fedavg.split_by = 'random';
-
 params.training = struct();
 params.training.nSnapshotsPerSNR = 500;
 params.training.dataAug_dropRate_min = 0.1;

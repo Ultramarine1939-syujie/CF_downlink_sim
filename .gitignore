@@ -34,13 +34,13 @@ build/
 *.ipynb_checkpoints
 
 # ── 模型文件 ───────────────────────────────────────────────────────────────
-models/
-!models/.gitkeep              # 保留目录但忽略内容
+/models/
+!/models/.gitkeep             # 保留目录但忽略内容
 
 # ── 生成的数据 ─────────────────────────────────────────────────────────────
 Imgs/
 SimulationData/
-data/
+/data/
 logs/
 *.h5
 *.hdf5

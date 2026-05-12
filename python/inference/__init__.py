@@ -65,32 +65,51 @@ class GNNInferrer:
         Returns:
             rho: (L, K) 功率分配系数
         """
-        x_ap = torch.FloatTensor(sqrt_gain).unsqueeze(0)
+        sqrt_gain_masked = sqrt_gain * D_mask
+        snr_norm = np.log10(max(Pt, 1e-12)) / 3.0
+        ap_degree = D_mask.sum(axis=1, keepdims=True) / max(self.K, 1)
+        ue_degree = D_mask.sum(axis=0, keepdims=True).T / max(self.L, 1)
+        ap_gain = np.log1p(sqrt_gain_masked.sum(axis=1, keepdims=True))
+        ue_gain = np.log1p(sqrt_gain_masked.sum(axis=0, keepdims=True)).T
 
-        sqrt_gain_ue = sqrt_gain.T
-        x_ue = torch.cat([
-            torch.FloatTensor(sqrt_gain_ue),
-            torch.full((self.K, 1), sigma_e)
-        ], dim=1).unsqueeze(0)
+        x_ap = torch.FloatTensor(np.concatenate([
+            sqrt_gain_masked,
+            np.full((self.L, 1), snr_norm, dtype=np.float32),
+            np.full((self.L, 1), sigma_e, dtype=np.float32),
+            ap_degree.astype(np.float32),
+            ap_gain.astype(np.float32),
+        ], axis=1))
 
-        D_mask_t = torch.FloatTensor(D_mask).unsqueeze(0)
-        y_dummy = torch.zeros(1, self.L, self.K)
-        rho_is_nonzero_dummy = torch.zeros(1, self.L, self.K)
+        x_ue = torch.FloatTensor(np.concatenate([
+            sqrt_gain_masked.T,
+            np.full((self.K, 1), snr_norm, dtype=np.float32),
+            np.full((self.K, 1), sigma_e, dtype=np.float32),
+            ue_degree.astype(np.float32),
+            ue_gain.astype(np.float32),
+        ], axis=1))
+
+        D_mask_t = torch.FloatTensor(D_mask)
+        y_dummy = torch.zeros(self.L, self.K)
+        rho_is_nonzero_dummy = torch.zeros(self.L, self.K)
+
+        max_feat_dim = max(x_ap.shape[1], x_ue.shape[1])
+        x_combined = torch.zeros(self.L + self.K, max_feat_dim)
+        x_combined[:self.L, :x_ap.shape[1]] = x_ap
+        x_combined[self.L:, :x_ue.shape[1]] = x_ue
 
         D = D_mask.numpy() if isinstance(D_mask, torch.Tensor) else D_mask
         src_ap, ue_dst = np.where(D == 1)
-        edge_index = np.array([
-            src_ap,
-            ue_dst + self.L
-        ])
+        edge_ap2ue = np.array([src_ap, ue_dst + self.L])
+        edge_ue2ap = np.array([ue_dst + self.L, src_ap])
+        edge_index = np.concatenate([edge_ap2ue, edge_ue2ap], axis=1)
 
         from torch_geometric.data import Data, Batch
         data = Data(
-            x=torch.cat([x_ap, x_ue], dim=1).squeeze(0),
+            x=x_combined,
             edge_index=torch.LongTensor(edge_index),
-            D_mask=D_mask_t.squeeze(0),
-            rho_is_nonzero=rho_is_nonzero_dummy.squeeze(0),
-            y=y_dummy.squeeze(0),
+            D_mask=D_mask_t,
+            rho_is_nonzero=rho_is_nonzero_dummy,
+            y=y_dummy,
             esr=torch.FloatTensor([0.0]),
             snr=torch.FloatTensor([10.0])
         )

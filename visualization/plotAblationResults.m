@@ -72,7 +72,7 @@ end
 figure('Visible', 'off', 'Position', [100 100 700 700]);
 
 % 选取核心对比变体
-coreVariants = {'full', 'mlp_only', 'fedavg_full', 'global_norm', 'no_augment'};
+coreVariants = {'full', 'mlp_only', 'global_norm', 'no_augment'};
 coreMask = ismember(variantNames, coreVariants);
 coreNames = variantNames(coreMask);
 coreCorr = valCorr(coreMask);
@@ -126,7 +126,6 @@ figure('Visible', 'off', 'Position', [100 100 1000 400]);
 % 定义对比组
 comparisons = {
     'GNN vs No-GNN', {'full', 'mlp_only'};
-    'FedAvg vs Central', {'full', 'fedavg_full'};
     'Per-sample vs Global', {'full', 'global_norm'};
     'With vs No Augment', {'full', 'no_augment'};
 };

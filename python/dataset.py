@@ -8,6 +8,19 @@ import numpy as np
 import torch
 from torch.utils.data import Dataset as TorchDataset
 
+
+def _as_lkn(arr, L, K, name):
+    """Return MATLAB/HDF5 arrays as (L, K, snapshots)."""
+    arr = np.array(arr)
+    if arr.ndim != 3:
+        raise ValueError(f"{name} must be 3D, got shape {arr.shape}")
+    if arr.shape[0] == L and arr.shape[1] == K:
+        return arr
+    if arr.shape[2] == L and arr.shape[1] == K:
+        return np.transpose(arr, (2, 1, 0))
+    raise ValueError(f"{name} shape {arr.shape} is incompatible with L={L}, K={K}")
+
+
 class GNNDataset(TorchDataset):
     """GNN 功率分配数据集
 
@@ -40,19 +53,19 @@ class GNNDataset(TorchDataset):
         with h5py.File(mat_path, 'r') as f:
             # 读取 features
             features = f['features']
-            sqrtGain = np.array(features['sqrtGain'])  # (N, K, L) in HDF5
-            D = np.array(features['D'])                # (N, K, L) in HDF5
+            sqrtGain = np.array(features['sqrtGain'])
+            D = np.array(features['D'])
             sigma_e = np.array(features['sigma_e'])    # (N, 1, 1) in HDF5
 
             # 读取 labels
             labels = f['labels']
-            # 优先使用 rho_Dist（大尺度功率分配，与特征匹配）
-            if 'rho_Dist' in labels:
-                rho_raw = np.array(labels['rho_Dist'])
-                print("  Using rho_Dist as labels (matched with large-scale features)")
-            else:
+            # 训练目标应与项目目标一致：学习 WMMSE 的功率分配映射。
+            if 'rho_WMMSE' in labels:
                 rho_raw = np.array(labels['rho_WMMSE'])
-                print("  WARNING: rho_Dist not found, falling back to rho_WMMSE")
+                print("  Using rho_WMMSE as labels (GNN learns WMMSE mapping)")
+            else:
+                rho_raw = np.array(labels['rho_Dist'])
+                print("  WARNING: rho_WMMSE not found, falling back to rho_Dist")
             ESR_WMMSE = np.array(labels['ESR_WMMSE']).flatten()  # (N,)
 
             # 读取 meta 信息 (结构体数组)
@@ -71,9 +84,8 @@ class GNNDataset(TorchDataset):
                 snrs.append(snr)
                 modes.append(mode.strip())
 
-        # 转置: HDF5 (N, K, L) → 标准 (L, K, N)
-        self.sqrtGain = np.transpose(sqrtGain, (2, 1, 0))  # (L, K, N)
-        self.D = np.transpose(D, (2, 1, 0))                # (L, K, N)
+        self.sqrtGain = _as_lkn(sqrtGain, L, K, 'features.sqrtGain')
+        self.D = _as_lkn(D, L, K, 'features.D')
         # sigma_e: 每个快照一个标量，MATLAB 存储形状不确定
         # 统一处理为 (N,) 的 1D 数组
         sigma_e_flat = np.array(sigma_e).flatten()
@@ -87,7 +99,7 @@ class GNNDataset(TorchDataset):
             print(f"WARNING: sigma_e shape {sigma_e.shape} unexpected, "
                   f"got {len(sigma_e_flat)} values for {n_snaps_raw} snapshots. Using first value.")
             self.sigma_e = np.full(n_snaps_raw, sigma_e_flat[0])
-        self.rho_raw = np.transpose(rho_raw, (2, 1, 0))   # (L, K, N) 原始标签
+        self.rho_raw = _as_lkn(rho_raw, L, K, 'labels.rho')   # (L, K, N) 原始标签
         self.ESR_WMMSE = ESR_WMMSE                          # (N,)
 
         self.snrs = np.array(snrs)
@@ -149,8 +161,8 @@ class GNNDataset(TorchDataset):
 
         Returns:
             Data: PyTorch Geometric Data 对象
-                x_ap: AP 节点特征 (L, K) - 每个 AP 到所有 UE 的 sqrt(gain)
-                x_ue: UE 节点特征 (K, L+1) - 每个 UE 来自所有 AP 的 sqrt(gain) + sigma_e
+                x_ap: AP 节点特征 (L, K+4) - masked sqrt(gain) + SNR/CSI/degree/gain context
+                x_ue: UE 节点特征 (K, L+4) - masked sqrt(gain) + SNR/CSI/degree/gain context
                 edge_index: 边索引 (2, num_edges) - 固定的全连接边
                 D_mask: D 矩阵掩码 (L, K) - 指示哪些边有效
                 y: 标签 rho_WMMSE (L, K)
@@ -193,17 +205,6 @@ class GNNDataset(TorchDataset):
         # 裁剪到 [-1, 1]
         rho_normed = np.clip(rho_normed, -1.0, 1.0)
 
-        # 使用固定的边索引
-        edge_index = self.edge_index_fixed
-
-        # AP 节点特征: sqrt(gain) 每一行是一个 AP 的特征向量 (K,)
-        x_ap = torch.FloatTensor(sqrt_g)  # (L, K)
-
-        # UE 节点特征: [sqrt(gain) from all APs, sigma_e] (L+1,)
-        sqrt_g_ue = sqrt_g.T  # (K, L)
-        sigma_e_vec = torch.full((self.K, 1), sigma_e)  # (K, 1)
-        x_ue = torch.cat([torch.FloatTensor(sqrt_g_ue), sigma_e_vec], dim=1)  # (K, L+1)
-
         # D 掩码作为额外输入
         D_mask = torch.FloatTensor(D)  # (L, K)
 
@@ -213,11 +214,45 @@ class GNNDataset(TorchDataset):
         # 非零 rho 标记（基于原始 rho_raw，不受归一化影响）
         rho_is_nonzero = torch.FloatTensor(nonzero_mask.astype(np.float32))  # (L, K)
 
+        # 与推理端一致的训练目标：每个 AP 内的功率分配比例。
+        rho_share = np.zeros_like(rho_raw_snap, dtype=np.float32)
+        for l in range(self.L):
+            served = D[l, :] > 0.5
+            total_power = float(rho_raw_snap[l, served].sum())
+            if total_power > 0:
+                rho_share[l, served] = rho_raw_snap[l, served] / total_power
+
         # ESR 作为辅助标签
         esr_label = torch.FloatTensor([esr])
 
-        # SNR 作为辅助特征
+        # SNR 作为辅助特征/条件输入。缩放到常见 0~1 附近，避免量纲压过链路特征。
         snr_label = torch.FloatTensor([snr])
+
+        sqrt_g_masked = sqrt_g * D
+        snr_norm = float(snr) / 30.0
+        ap_degree = D.sum(axis=1, keepdims=True) / max(self.K, 1)
+        ue_degree = D.sum(axis=0, keepdims=True).T / max(self.L, 1)
+        ap_gain = np.log1p(sqrt_g_masked.sum(axis=1, keepdims=True))
+        ue_gain = np.log1p(sqrt_g_masked.sum(axis=0, keepdims=True)).T
+
+        x_ap = torch.FloatTensor(np.concatenate([
+            sqrt_g_masked,
+            np.full((self.L, 1), snr_norm, dtype=np.float32),
+            np.full((self.L, 1), sigma_e, dtype=np.float32),
+            ap_degree.astype(np.float32),
+            ap_gain.astype(np.float32),
+        ], axis=1))
+
+        x_ue = torch.FloatTensor(np.concatenate([
+            sqrt_g_masked.T,
+            np.full((self.K, 1), snr_norm, dtype=np.float32),
+            np.full((self.K, 1), sigma_e, dtype=np.float32),
+            ue_degree.astype(np.float32),
+            ue_gain.astype(np.float32),
+        ], axis=1))
+
+        # 使用固定的边索引
+        edge_index = self.edge_index_fixed
 
         data = {
             'x_ap': x_ap,
@@ -225,6 +260,7 @@ class GNNDataset(TorchDataset):
             'edge_index': torch.LongTensor(edge_index),
             'D_mask': D_mask,
             'rho_is_nonzero': rho_is_nonzero,
+            'y_share': torch.FloatTensor(rho_share),
             'y': y,
             'esr': esr_label,
             'snr': snr_label,
@@ -288,15 +324,41 @@ class GNNDatasetGlobalNorm(TorchDataset):
 
         rho_normed = np.clip(rho_normed, -1.0, 1.0)
 
-        edge_index = self.edge_index_fixed
-        x_ap = torch.FloatTensor(sqrt_g)
-        sqrt_g_ue = sqrt_g.T
-        sigma_e_vec = torch.full((self.K, 1), sigma_e)
-        x_ue = torch.cat([torch.FloatTensor(sqrt_g_ue), sigma_e_vec], dim=1)
-
         D_mask = torch.FloatTensor(D)
         y = torch.FloatTensor(rho_normed)
         rho_is_nonzero = torch.FloatTensor(nonzero_mask.astype(np.float32))
+
+        rho_share = np.zeros_like(rho_raw_snap, dtype=np.float32)
+        for l in range(self.L):
+            served = D[l, :] > 0.5
+            total_power = float(rho_raw_snap[l, served].sum())
+            if total_power > 0:
+                rho_share[l, served] = rho_raw_snap[l, served] / total_power
+
+        sqrt_g_masked = sqrt_g * D
+        snr_norm = float(snr) / 30.0
+        ap_degree = D.sum(axis=1, keepdims=True) / max(self.K, 1)
+        ue_degree = D.sum(axis=0, keepdims=True).T / max(self.L, 1)
+        ap_gain = np.log1p(sqrt_g_masked.sum(axis=1, keepdims=True))
+        ue_gain = np.log1p(sqrt_g_masked.sum(axis=0, keepdims=True)).T
+
+        x_ap = torch.FloatTensor(np.concatenate([
+            sqrt_g_masked,
+            np.full((self.L, 1), snr_norm, dtype=np.float32),
+            np.full((self.L, 1), sigma_e, dtype=np.float32),
+            ap_degree.astype(np.float32),
+            ap_gain.astype(np.float32),
+        ], axis=1))
+
+        x_ue = torch.FloatTensor(np.concatenate([
+            sqrt_g_masked.T,
+            np.full((self.K, 1), snr_norm, dtype=np.float32),
+            np.full((self.K, 1), sigma_e, dtype=np.float32),
+            ue_degree.astype(np.float32),
+            ue_gain.astype(np.float32),
+        ], axis=1))
+
+        edge_index = self.edge_index_fixed
         esr_label = torch.FloatTensor([esr])
         snr_label = torch.FloatTensor([snr])
 
@@ -306,6 +368,7 @@ class GNNDatasetGlobalNorm(TorchDataset):
             'edge_index': torch.LongTensor(edge_index),
             'D_mask': D_mask,
             'rho_is_nonzero': rho_is_nonzero,
+            'y_share': torch.FloatTensor(rho_share),
             'y': y,
             'esr': esr_label,
             'snr': snr_label,

@@ -18,15 +18,6 @@ from torch.utils.data import DataLoader, random_split
 from torch_geometric.nn import GATConv
 from torch_geometric.data import Data, Batch
 
-try:
-    from models import PowerGNN_GAT, PowerGNN_MLP
-    from data import GNNDataset, custom_collate as data_collate
-    USING_MODULAR = True
-except ImportError:
-    from dataset import GNNDataset
-    USING_MODULAR = False
-
-
 def custom_collate(batch):
     """
     自定义 collate 函数 - 支持 GAT 批训练
@@ -41,6 +32,7 @@ def custom_collate(batch):
     edge_index_ue2ap_list = []  # UE -> AP 边
     D_mask_list = []
     rho_is_nonzero_list = []
+    y_share_list = []
     y_list = []
     esr_list = []
     snr_list = []
@@ -64,6 +56,7 @@ def custom_collate(batch):
         rho_is_nonzero_list.append(item['rho_is_nonzero'])
 
         # 标签: (L, K)
+        y_share_list.append(item['y_share'])
         y_list.append(item['y'])
 
         # 辅助标签
@@ -108,6 +101,7 @@ def custom_collate(batch):
             edge_index=edge_index,
             D_mask=D_mask_list[i],
             rho_is_nonzero=rho_is_nonzero_list[i],
+            y_share=y_share_list[i],
             y=y_list[i],
             esr=esr_list[i],
             snr=snr_list[i],
@@ -138,8 +132,9 @@ class PowerGNN_MLP(nn.Module):
         self.K = K
         self.hidden_dim = hidden_dim
 
-        # Flattened input: AP features (L*K) + UE features (K*(L+1)) = 2*L*K + K
-        self.input_dim = L * K + K * (L + 1)  # = 2*L*K + K
+        self.ap_input_dim = K + 4
+        self.ue_input_dim = L + 4
+        self.input_dim = L * self.ap_input_dim + K * self.ue_input_dim
 
         # 3-layer MLP with residual connections
         self.layers = nn.ModuleList()
@@ -158,7 +153,7 @@ class PowerGNN_MLP(nn.Module):
             nn.Linear(hidden_dim, hidden_dim // 2),
             nn.GELU(),
             nn.Dropout(dropout * 0.5),
-            nn.Linear(hidden_dim // 2, K)
+            nn.Linear(hidden_dim // 2, L * K)
         )
 
         self.output_scale = output_scale if output_scale is not None else 1.5
@@ -219,6 +214,7 @@ def custom_collate_mlp(batch):
     x_ue_list = []
     D_mask_list = []
     rho_is_nonzero_list = []
+    y_share_list = []
     y_list = []
     esr_list = []
     snr_list = []
@@ -228,6 +224,7 @@ def custom_collate_mlp(batch):
         x_ue_list.append(item['x_ue'])               # (K, L+1)
         D_mask_list.append(item['D_mask'])           # (L, K)
         rho_is_nonzero_list.append(item['rho_is_nonzero'])  # (L, K)
+        y_share_list.append(item['y_share'])         # (L, K)
         y_list.append(item['y'])                     # (L, K)
         esr_list.append(item['esr'])
         snr_list.append(item['snr'])
@@ -237,6 +234,7 @@ def custom_collate_mlp(batch):
         'x_ue': torch.stack(x_ue_list),             # (batch, K, L+1)
         'D_mask': torch.stack(D_mask_list),         # (batch, L, K)
         'rho_is_nonzero': torch.stack(rho_is_nonzero_list),  # (batch, L, K)
+        'y_share': torch.stack(y_share_list),       # (batch, L, K)
         'y': torch.stack(y_list),                   # (batch, L, K)
         'esr': torch.stack(esr_list),               # (batch, 1)
         'snr': torch.stack(snr_list),               # (batch, 1)
@@ -349,8 +347,8 @@ class PowerGNN_GAT(nn.Module):
         self.num_heads = num_heads
 
         # 节点特征维度
-        self.ap_input_dim = K       # AP 节点: sqrt(gain) to K UEs
-        self.ue_input_dim = L + 1   # UE 节点: sqrt(gain) from L APs + sigma_e
+        self.ap_input_dim = K + 4   # AP 节点: masked sqrt(gain) + SNR/CSI/degree/gain context
+        self.ue_input_dim = L + 4   # UE 节点: masked sqrt(gain) + SNR/CSI/degree/gain context
 
         # 输入特征标准化
         self.input_norm_ap = nn.LayerNorm(self.ap_input_dim)
@@ -455,7 +453,7 @@ class PowerGNN_GAT(nn.Module):
         return rho
 
 
-def compute_loss(rho_pred, rho_true, D_mask, rho_is_nonzero):
+def compute_loss(rho_pred, rho_true, D_mask, rho_is_nonzero, target_share=None):
     """
     只对 rho_raw > 0 的位置计算 loss（方案A：非零 rho mask）
 
@@ -490,7 +488,19 @@ def compute_loss(rho_pred, rho_true, D_mask, rho_is_nonzero):
         reduction='mean'
     )
 
-    return huber_loss
+    if target_share is None:
+        return huber_loss
+
+    pred_weights = torch.relu((rho_pred + 1.0) / 2.0) * D_mask.float()
+    pred_share = pred_weights / (pred_weights.sum(dim=2, keepdim=True) + 1e-8)
+    share_mask = D_mask > 0.5
+    share_loss = torch.nn.functional.mse_loss(
+        pred_share[share_mask],
+        target_share[share_mask],
+        reduction='mean'
+    )
+
+    return huber_loss + 2.0 * share_loss
 
 
 def train_epoch(model, dataloader, optimizer, scheduler, device):
@@ -509,8 +519,9 @@ def train_epoch(model, dataloader, optimizer, scheduler, device):
         y_batched = batch.y.view(-1, model.L, model.K)  # (batch, L, K)
         D_batched = batch.D_mask.view(-1, model.L, model.K)  # (batch, L, K)
         nz_batched = batch.rho_is_nonzero.view(-1, model.L, model.K)  # (batch, L, K)
+        share_batched = batch.y_share.view(-1, model.L, model.K)
 
-        loss = compute_loss(rho_pred, y_batched, D_batched, nz_batched)
+        loss = compute_loss(rho_pred, y_batched, D_batched, nz_batched, share_batched)
 
         if torch.isnan(loss) or torch.isinf(loss):
             print("Warning: NaN/Inf loss, skipping")
@@ -545,8 +556,9 @@ def evaluate(model, dataloader, device):
             y_batched = batch.y.view(-1, model.L, model.K)
             D_batched = batch.D_mask.view(-1, model.L, model.K)
             nz_batched = batch.rho_is_nonzero.view(-1, model.L, model.K)
+            share_batched = batch.y_share.view(-1, model.L, model.K)
 
-            mse = compute_loss(rho_pred, y_batched, D_batched, nz_batched).item()
+            mse = compute_loss(rho_pred, y_batched, D_batched, nz_batched, share_batched).item()
             total_mse += mse * rho_pred.shape[0]
 
             nonzero_mask = (nz_batched > 0.5) & (D_batched > 0.5)
@@ -582,9 +594,11 @@ def evaluate(model, dataloader, device):
 
 
 def main():
+    from dataset import GNNDataset
+
     parser = argparse.ArgumentParser(description='Train GNN Power Allocation Model with GATConv')
     parser.add_argument('--data', type=str,
-                        default='../data/gnn_training/gnn_training_data_20260427_100000.mat',
+                        default='../data/gnn_training/*.mat',
                         help='Path to training data')
     parser.add_argument('--epochs', type=int, default=300, help='Number of epochs')
     parser.add_argument('--batch_size', type=int, default=32, help='Batch size')
@@ -643,7 +657,8 @@ def main():
             y_nz_min = y_nz_max = y_nz_mean = 0.0
         print(f"  Sample {i}: y range=[{y.min():.6f}, {y.max():.6f}], "
               f"y mean={y.mean():.6f}, D sum={D.sum():.0f}, "
-              f"nonzero rho: {n_nz}/{n_total}, y_nz=[{y_nz_min:.3f}, {y_nz_max:.3f}], mean={y_nz_mean:.3f}")
+              f"nonzero rho: {n_nz}/{n_total}, y_nz=[{y_nz_min:.3f}, {y_nz_max:.3f}], "
+              f"mean={y_nz_mean:.3f}, share_sum_mean={sample['y_share'].sum(dim=1).mean():.3f}")
 
     # 划分数据集
     val_size = int(len(dataset) * args.val_split)
@@ -747,6 +762,8 @@ def main():
             torch.save({
                 'epoch': best_epoch,
                 'model_state_dict': best_state_dict,
+                'model_type': 'gat',
+                'feature_schema': 'masked_gain_snr_csi_degree_sumgain_v2',
                 'val_mse': best_val_loss,
                 'val_corr': best_metrics.get('val_corr', 0),
                 'norm_method': 'per_sample_signedlog_minmax',
@@ -769,6 +786,8 @@ def main():
     torch.save({
         'epoch': best_epoch,
         'model_state_dict': best_state_dict,
+        'model_type': 'gat',
+        'feature_schema': 'masked_gain_snr_csi_degree_sumgain_v2',
         'val_mse': best_val_loss,
         'val_corr': best_metrics.get('val_corr', 0),
         'norm_method': 'per_sample_signedlog_minmax',
@@ -781,6 +800,8 @@ def main():
     final_path = os.path.join(args.output_dir, 'final_gat_gnn_power.pt')
     torch.save({
         'model_state_dict': model.state_dict(),
+        'model_type': 'gat',
+        'feature_schema': 'masked_gain_snr_csi_degree_sumgain_v2',
         'norm_method': 'per_sample_signedlog_minmax',
         'output_scale': model.output_scale,
         'args': args

@@ -4,6 +4,6 @@
 提供集中式训练功能
 """
 
-from .train_centralized import train_centralized
+from .train_centralized import main as train_centralized
 
 __all__ = ['train_centralized']

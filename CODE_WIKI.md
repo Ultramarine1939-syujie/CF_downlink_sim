@@ -465,7 +465,7 @@ rho(l, served_k) = Pt / num_served_UEs
 - 图 9-10：所有方法最优性能汇总
 
 v2 版本改进：
-- 增加 GNN+FL 和 GNN 方法的对比
+- 增加 GNN 和传统功率分配方法的对比
 - 增加性能增益分析图
 - 增加综合性能摘要表
 - 改进颜色方案和图例
@@ -492,7 +492,7 @@ v2 版本改进：
 
 v2 版本改进：
 - 聚焦排名与增益分析
-- 增加 GNN+FL vs WMMSE 的 ESR loss 分析
+- 增加 GNN vs WMMSE 的 ESR loss 分析
 - 增加同步延迟和通信开销减少比例统计
 
 ---
@@ -675,10 +675,6 @@ class GNNInferrer:
 | `train_epoch` | python/train_gnn.py | GAT 训练一个 epoch |
 | `evaluate` | python/train_gnn.py | GAT 模型评估 |
 | `GNNInferrer` | python/inference/__init__.py | GNN 推理器 |
-| `set_seed` | python/fedavg.py | 随机种子设置 |
-| `split_dataset_to_clients` | python/fedavg.py | 数据集分割 |
-| `local_train` | python/fedavg.py | 本地训练 |
-| `fedavg_aggregate` | python/fedavg.py | FedAvg 参数聚合 |
 | `MetricTracker` | python/utils/__init__.py | 指标追踪器 |
 
 ---
@@ -850,9 +846,6 @@ cd python
 
 # 集中式训练 (GAT)
 python train_gnn.py --data "../data/gnn_training/*.mat" --epochs 300
-
-# 联邦学习训练
-python fedavg.py --data "../data/gnn_training/*.mat" --epochs 300
 
 # 消融实验
 python train_gnn_ablation.py --ablation all --data "../data/gnn_training/*.mat"

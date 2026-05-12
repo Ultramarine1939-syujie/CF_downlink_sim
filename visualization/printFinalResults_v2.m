@@ -76,7 +76,7 @@ end
 if ~isempty(PSO_info.iterUsed)
     fprintf('╠══════════════════════════════════════════════════════════════════════════════════╣\n');
     fprintf('║  PSO: avg %5.1f iterations  |  best fitness: %.4f                              ║\n', ...
-        mean(PSO_info.iterUsed), PSO_info.bestFitness);
+        mean(PSO_info.iterUsed), max(PSO_info.bestFitness));
 end
 
 fprintf('╠══════════════════════════════════════════════════════════════════════════════════╣\n');

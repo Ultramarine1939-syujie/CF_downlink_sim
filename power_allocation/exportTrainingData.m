@@ -1,5 +1,5 @@
 function exportTrainingData(outputDir, nSnapshotsPerSNR, useParallel)
-%exportTrainingData 生成 GNN-FL 训练数据集 (Phase 1)
+%exportTrainingData 生成 GNN 训练数据集 (Phase 1)
 %   outputDir: 输出目录路径
 %   nSnapshotsPerSNR: 每个 SNR 点的快照数（默认 500）
 %   useParallel: 是否使用并行计算（默认 true，如有警告则自动降级）
@@ -15,7 +15,7 @@ function exportTrainingData(outputDir, nSnapshotsPerSNR, useParallel)
 % 数据增强策略:
 %   1. 拓扑扰动: 随机丢弃 10%~30% 的 AP-UE 连接
 %   2. 噪声扰动: 对 sigma_e 添加 ±20% 随机扰动
-%   3. SNR 覆盖: -10:5:30 dB，共 9 个 SNR 点
+%   3. SNR 覆盖: 10:5:30 dB，共 5 个 SNR 点
 
 addpath(genpath(pwd));
 
@@ -56,10 +56,10 @@ ESR_Dist_cell  = cell(N_snaps, 1);
 ESR_EPA_cell   = cell(N_snaps, 1);
 meta_cell      = cell(N_snaps, 1);
 
-fprintf('=== GNN-FL 训练数据集生成 (Phase 1) ===\n');
+fprintf('=== GNN 训练数据集生成 (Phase 1) ===\n');
 fprintf('输出目录: %s\n', outputDir);
 fprintf('每个 SNR 快照数: %d\n', nSnapshotsPerSNR);
-fprintf('SNR 范围: -10:5:30 dB\n');
+fprintf('SNR 范围: 10:5:30 dB\n');
 fprintf('接入模式: All + DCC\n');
 fprintf('预计生成: %d 快照\n', N_snaps);
 

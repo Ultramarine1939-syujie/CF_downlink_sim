@@ -159,10 +159,10 @@ exportTrainingData(fullfile(pwd, 'data', 'gnn_training'), 2)
 | 属性 | 默认值 | 说明 |
 |------|--------|------|
 | 文件名格式 | `gnn_training_data_YYYYMMDD_HHMMSS.mat` | 含时间戳 |
-| SNR 范围 | -10:5:30 dB | 共 9 个 SNR 点 |
+| SNR 范围 | 10:5:30 dB | 共 5 个 SNR 点 |
 | 接入模式 | All + DCC | 两种模式 |
 | 每 SNR 快照数 | 500 | 可自定义 |
-| 总数据量 | 9 × 500 × 2 = 9000 条 | 取决于参数 |
+| 总数据量 | 5 × 500 × 2 = 5000 条 | 取决于参数 |
 | 数据增强 | 随机丢弃 AP + CSI 误差扰动 | 提升泛化能力 |
 
 ---
@@ -374,7 +374,7 @@ main/SimulationData/
 
 ## 🔬 算法组合说明
 
-仿真系统自动遍历 **56 种算法组合**（7 PA × 4 PC × 2 Mode）：
+仿真系统自动遍历 **48 种算法组合**（6 PA × 4 PC × 2 Mode）：
 
 ### 功率分配方法 (PA)
 
@@ -646,7 +646,7 @@ CF_downlink_sim/
 
 ```bibtex
 @misc{CF_downlink_sim,
-  title = {CF-Downlink-Sim: Cell-Free MIMO Downlink Simulation with GNN and Federated Learning},
+  title = {CF-Downlink-Sim: Cell-Free MIMO Downlink Simulation with GNN Power Allocation},
   author = {Research Team},
   year = {2026},
   note = {Cell-Free Massive MIMO Downlink Simulation Platform},
