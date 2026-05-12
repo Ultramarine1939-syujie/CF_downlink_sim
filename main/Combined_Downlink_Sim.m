@@ -38,6 +38,16 @@ runStage = 3;     % 1=仅传统方法(Baseline/EPA/PSO/WMMSE/Random)
                    % 3=全部(默认, 等价原版行为)
 useCache = true;   % 缓存总开关; false 则每次全部重算(等同v2.0)
 
+% ---------- 预编码 x 功率分配同步时延消融 ----------
+enableSyncAblation = true;         % 输出 PA/PC 组合对同步时延的消融分析
+syncAblation = struct();
+syncAblation.fronthaulMbps = 1000; % 控制/前传链路速率, 用于 bytes -> ms
+syncAblation.syncRttMs = 0.05;     % 单轮 AP/CPU 同步控制往返时延
+syncAblation.dccPayloadRatio = 0.35; % DCC 相对 All 的同步载荷比例近似
+syncAblation.wmmseRounds = 20;     % WMMSE 功率更新同步轮次
+syncAblation.psoRounds = 50;       % PSO 粒子全局最优同步轮次
+syncAblation.includeComputeTime = true; % 同时导出已有 PA 计算时间
+
 %% ================= 路径配置 =================
 scriptDir = fileparts(mfilename('fullpath'));
 cd(scriptDir);
@@ -140,6 +150,8 @@ fprintf('  Scenarios: %d x %d realizations\n', numScenarios, nbrOfRealizations);
 fprintf('  Algorithms: %d  (Trad: %d, GNN: %d)\n', numAlgos, numPA_trad*numPC*numMode, numPA_gnn*numPC*numMode);
 fprintf('  Stage: %d  |  Cache: %s\n', runStage, mat2str(useCache));
 fprintf('  Output: fig=%s  data=%s\n', mat2str(isSaveFig), mat2str(isSaveData));
+fprintf('  Sync ablation: %s  |  RTT=%.3f ms  fronthaul=%.0f Mbps\n', ...
+    mat2str(enableSyncAblation), syncAblation.syncRttMs, syncAblation.fronthaulMbps);
 fprintf('=====================================================================\n');
 
 %% ================= 初始化结果存储 =================
@@ -695,6 +707,12 @@ printFinalResults_v2(ESR_mean, algoTable, SNR_dB, ESR_best, ESR_best_algo, ...
 plotESRResults_v2(ESR_mean, ESR_best, ESR_best_algo, algoTable, SNR_dB, ...
     numScenarios, isSaveFig, savePath, isSaveData, dataPath, Perf);
 
+if enableSyncAblation
+    Ablation = buildSyncAblationMetrics(ESR_mean, algoTable, SNR_dB, Perf, ...
+        L, K, N, nbrOfRealizations, nIter, syncAblation);
+    plotLatencyAblationResults(Ablation, savePath, isSaveFig, isSaveData, dataPath);
+end
+
 fprintf('\n>>> All done. Figures saved to: %s\n', savePath);
 fprintf('>>> Data saved to: %s\n', dataPath);
 
@@ -799,4 +817,129 @@ function rho_random = computeRhoRandom(scaling, D, Pt, K, L)
     nonzeroAP = apPower > 0;
     eta(nonzeroAP) = sqrt(powerPerAP ./ apPower(nonzeroAP));
     rho_random = (eta.^2) .* (scaling .* D) .* (d2.');
+end
+
+%% ------------------------------------------------------------------------
+function Ablation = buildSyncAblationMetrics(ESR_mean, algoTable, SNR_dB, Perf, ...
+        L, K, N, nbrOfRealizations, nIter, cfg)
+% 构建预编码+功率分配组合的同步时延消融指标。
+% 该模型刻画控制面同步代价: 迭代方法按同步轮次累积 RTT, 集中式/全局预编码按
+% CSI/统计量载荷折算传输时延。GNN/EPA/Baseline 不需要迭代同步。
+    numAlgos = numel(algoTable);
+    numSNR = numel(SNR_dB);
+    syncDelayMs = zeros(numAlgos, numSNR);
+    computeDelayMs = nan(numAlgos, numSNR);
+    controlDelayMs = zeros(numAlgos, numSNR);
+    syncBytes = zeros(numAlgos, numSNR);
+    syncRounds = zeros(numAlgos, numSNR);
+
+    avgESR = mean(ESR_mean, 2);
+    for ai = 1:numAlgos
+        payloadRatio = 1;
+        if strcmp(algoTable(ai).mode, 'DCC')
+            payloadRatio = cfg.dccPayloadRatio;
+        end
+
+        [pcRounds, pcBytes] = estimatePCSync(algoTable(ai).pc, L, K, N, ...
+            nbrOfRealizations, nIter, payloadRatio);
+        [paRounds, paBytes] = estimatePASync(algoTable(ai).pa, L, K, cfg, payloadRatio);
+
+        totalRounds = pcRounds + paRounds;
+        totalBytes = pcBytes + paBytes;
+        fixedSyncMs = totalRounds * cfg.syncRttMs + bytesToMs(totalBytes, cfg.fronthaulMbps);
+
+        for si = 1:numSNR
+            syncDelayMs(ai, si) = fixedSyncMs;
+            syncBytes(ai, si) = totalBytes;
+            syncRounds(ai, si) = totalRounds;
+            computeDelayMs(ai, si) = lookupComputeDelayMs(algoTable(ai).pa, ...
+                algoTable(ai).mode, si, Perf);
+            if cfg.includeComputeTime && isfinite(computeDelayMs(ai, si))
+                controlDelayMs(ai, si) = syncDelayMs(ai, si) + computeDelayMs(ai, si);
+            else
+                controlDelayMs(ai, si) = syncDelayMs(ai, si);
+            end
+        end
+    end
+
+    Ablation = struct();
+    Ablation.SNR_dB = SNR_dB;
+    Ablation.algoTable = algoTable;
+    Ablation.ESR_mean = ESR_mean;
+    Ablation.avgESR = avgESR;
+    Ablation.sync_delay_ms = syncDelayMs;
+    Ablation.compute_delay_ms = computeDelayMs;
+    Ablation.control_delay_ms = controlDelayMs;
+    Ablation.sync_bytes = syncBytes;
+    Ablation.sync_rounds = syncRounds;
+    Ablation.config = cfg;
+end
+
+%% ------------------------------------------------------------------------
+function [rounds, bytes] = estimatePCSync(pcName, L, K, N, nbrOfRealizations, nIter, payloadRatio)
+    lkBytes = L * K * 8 * payloadRatio;
+    switch pcName
+        case 'MR'
+            rounds = 0;
+            bytes = 0;
+        case 'LMMSE'
+            rounds = 1;
+            bytes = lkBytes;
+        case 'RMMSE'
+            rounds = max(nIter, 1);
+            bytes = lkBytes * max(nIter, 1);
+        case 'LMMSE_G'
+            rounds = 1;
+            bytes = L * N * K * nbrOfRealizations * 16 * payloadRatio;
+        otherwise
+            rounds = 0;
+            bytes = 0;
+    end
+end
+
+%% ------------------------------------------------------------------------
+function [rounds, bytes] = estimatePASync(paName, L, K, cfg, payloadRatio)
+    lkComplexBytes = L * K * 16 * payloadRatio;
+    switch paName
+        case 'WMMSE'
+            rounds = cfg.wmmseRounds;
+            bytes = lkComplexBytes * cfg.wmmseRounds;
+        case 'PSO'
+            rounds = cfg.psoRounds;
+            bytes = (K * 16 + L * K * 8 * payloadRatio) * cfg.psoRounds;
+        otherwise
+            rounds = 0;
+            bytes = 0;
+    end
+end
+
+%% ------------------------------------------------------------------------
+function delayMs = bytesToMs(numBytes, fronthaulMbps)
+    delayMs = double(numBytes) * 8 / (fronthaulMbps * 1e6) * 1e3;
+end
+
+%% ------------------------------------------------------------------------
+function delayMs = lookupComputeDelayMs(paName, modeName, snrIdx, Perf)
+    delayMs = nan;
+    if isempty(Perf) || ~isstruct(Perf) || ~isfield(Perf, 'time_pa_sec') || ...
+            ~isfield(Perf, 'modeNames') || ~isfield(Perf, 'methodNames')
+        return;
+    end
+    switch paName
+        case 'baseline'
+            methodName = 'Baseline';
+        case 'WMMSE'
+            methodName = 'WMMSE';
+        case 'GNN'
+            methodName = 'GNN';
+        case {'EPA', 'random'}
+            delayMs = 0;
+            return;
+        otherwise
+            return;
+    end
+    mi = find(strcmp(Perf.modeNames, modeName), 1);
+    pi = find(strcmp(Perf.methodNames, methodName), 1);
+    if isempty(mi) || isempty(pi); return; end
+    delayMs = Perf.time_pa_sec(pi, snrIdx, mi) * 1000;
 end

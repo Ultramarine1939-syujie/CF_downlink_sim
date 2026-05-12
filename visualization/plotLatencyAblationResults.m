@@ -1,0 +1,236 @@
+function plotLatencyAblationResults(Ablation, savePath, isSaveFig, isSaveData, dataPath)
+%PLOTLATENCYABLATIONRESULTS Plot PA x PC synchronization-latency ablations.
+%
+% The input Ablation struct is created by main/Combined_Downlink_Sim.m and
+% contains one row per PA+PC+mode algorithm combination.
+
+algoTable = Ablation.algoTable;
+algoNames = {algoTable.name}.';
+algoPAs = {algoTable.pa}.';
+algoPCs = {algoTable.pc}.';
+algoModes = {algoTable.mode}.';
+
+avgESR = Ablation.avgESR(:);
+avgSyncMs = mean(Ablation.sync_delay_ms, 2);
+avgControlMs = mean(Ablation.control_delay_ms, 2);
+avgComputeMs = mean(Ablation.compute_delay_ms, 2, 'omitnan');
+avgBytes = mean(Ablation.sync_bytes, 2);
+avgRounds = mean(Ablation.sync_rounds, 2);
+
+paOrder = {'GNN', 'WMMSE', 'PSO', 'EPA', 'random', 'baseline'};
+paLabels = {'GNN', 'WMMSE', 'PSO', 'EPA', 'Random', 'Baseline'};
+pcOrder = {'MR', 'LMMSE', 'RMMSE', 'LMMSE_G'};
+pcLabels = {'MR', 'L-MMSE', 'R-MMSE', 'L-MMSE-G'};
+paColors = [
+    0.45 0.00 0.75
+    0.85 0.15 0.15
+    0.00 0.45 0.75
+    0.00 0.60 0.00
+    0.55 0.55 0.55
+    0.20 0.20 0.20
+];
+pcMarkers = {'o', 's', '^', 'd'};
+
+if isSaveFig && ~exist(savePath, 'dir')
+    mkdir(savePath);
+end
+if isSaveData && ~exist(dataPath, 'dir')
+    mkdir(dataPath);
+end
+
+%% Fig A5: ESR-sync Pareto scatter
+fig1 = figure('Visible', 'off', 'Position', [100 100 1120 620]);
+ax1 = axes(fig1);
+hold(ax1, 'on');
+modeMask = strcmp(algoModes, 'DCC');
+if ~any(modeMask)
+    modeMask = true(size(algoModes));
+end
+for pi = 1:numel(paOrder)
+    for ci = 1:numel(pcOrder)
+        idx = find(modeMask & strcmp(algoPAs, paOrder{pi}) & strcmp(algoPCs, pcOrder{ci}));
+        if isempty(idx); continue; end
+        scatter(ax1, max(avgSyncMs(idx), 1e-3), avgESR(idx), 70, ...
+            'Marker', pcMarkers{ci}, 'MarkerEdgeColor', paColors(pi, :), ...
+            'MarkerFaceColor', paColors(pi, :), 'MarkerFaceAlpha', 0.72);
+    end
+end
+set(ax1, 'XScale', 'log');
+xlabel('Modeled synchronization delay (ms)');
+ylabel('Average ESR (bit/s/Hz)');
+title('Ablation Pareto: Power Allocation + Precoding vs Synchronization Delay');
+grid on; box on; set(ax1, 'FontSize', 12);
+
+% Reader guide: use two adjacent legend boxes with the same visual style.
+legendAxPA = axes(fig1, 'Position', [0.15 0.78 0.38 0.10], 'Visible', 'off');
+hold(legendAxPA, 'on');
+paLegendHandles = gobjects(numel(paOrder), 1);
+for pi = 1:numel(paOrder)
+    paLegendHandles(pi) = plot(legendAxPA, nan, nan, 'o', ...
+        'MarkerEdgeColor', paColors(pi, :), 'MarkerFaceColor', paColors(pi, :), ...
+        'LineStyle', 'none', 'MarkerSize', 7, 'DisplayName', paLabels{pi});
+end
+lgdPA = legend(legendAxPA, paLegendHandles, paLabels, 'Orientation', 'horizontal', ...
+    'FontSize', 9, 'Box', 'on');
+title(lgdPA, 'Color: power allocation');
+
+legendAxPC = axes(fig1, 'Position', [0.15 0.68 0.33 0.10], 'Visible', 'off');
+hold(legendAxPC, 'on');
+pcLegendHandles = gobjects(numel(pcOrder), 1);
+for ci = 1:numel(pcOrder)
+    pcLegendHandles(ci) = plot(legendAxPC, nan, nan, pcMarkers{ci}, ...
+        'MarkerEdgeColor', [0.15 0.15 0.15], 'MarkerFaceColor', [0.75 0.75 0.75], ...
+        'LineStyle', 'none', 'MarkerSize', 7, 'DisplayName', pcLabels{ci});
+end
+lgdPC = legend(legendAxPC, pcLegendHandles, pcLabels, 'Orientation', 'horizontal', ...
+    'FontSize', 9, 'Box', 'on');
+title(lgdPC, 'Marker: precoder');
+
+% Label the best few ESR-delay tradeoffs.
+score = avgESR ./ max(avgSyncMs, 1e-3);
+score(~modeMask) = -inf;
+[~, labelIdx] = sort(score, 'descend');
+labelIdx = labelIdx(1:min(5, numel(labelIdx)));
+for ii = 1:numel(labelIdx)
+    idx = labelIdx(ii);
+    if ~isfinite(score(idx)); continue; end
+    text(ax1, max(avgSyncMs(idx), 1e-3) * 1.05, avgESR(idx), shortAlgoName(algoTable(idx)), ...
+        'FontSize', 8, 'Interpreter', 'none');
+end
+saveFigure(fig1, savePath, isSaveFig, 'FigA5_SyncLatency_ESR_Pareto');
+
+%% Fig A6: DCC PA x PC heatmap
+fig2 = figure('Visible', 'off', 'Position', [100 100 900 520]);
+heat = nan(numel(paOrder), numel(pcOrder));
+for pi = 1:numel(paOrder)
+    for ci = 1:numel(pcOrder)
+        idx = find(strcmp(algoPAs, paOrder{pi}) & strcmp(algoPCs, pcOrder{ci}) & strcmp(algoModes, 'DCC'), 1);
+        if isempty(idx)
+            idx = find(strcmp(algoPAs, paOrder{pi}) & strcmp(algoPCs, pcOrder{ci}), 1);
+        end
+        if ~isempty(idx)
+            heat(pi, ci) = avgSyncMs(idx);
+        end
+    end
+end
+imagesc(log10(heat + 1e-3));
+colormap(parula);
+cb = colorbar;
+cb.Label.String = 'Color legend: log10(sync delay in ms + 1e-3)';
+set(gca, 'XTick', 1:numel(pcOrder), 'XTickLabel', pcLabels, ...
+    'YTick', 1:numel(paOrder), 'YTickLabel', paLabels, 'FontSize', 12);
+xlabel('Precoding method');
+ylabel('Power allocation method');
+title({'PA x PC Synchronization Delay Ablation (DCC preferred)', ...
+    'Cell text = modeled sync delay in ms; color = logarithmic delay scale'});
+for pi = 1:numel(paOrder)
+    for ci = 1:numel(pcOrder)
+        if isfinite(heat(pi, ci))
+            text(ci, pi, sprintf('%.3g', heat(pi, ci)), ...
+                'HorizontalAlignment', 'center', 'Color', 'w', 'FontWeight', 'bold');
+        end
+    end
+end
+saveFigure(fig2, savePath, isSaveFig, 'FigA6_PA_PC_SyncLatency_Heatmap');
+
+%% Fig A7: Fixed R-MMSE, PA ablation
+fig3 = figure('Visible', 'off', 'Position', [100 100 980 520]);
+fixedPC = 'RMMSE';
+barDelay = nan(1, numel(paOrder));
+lineESR = nan(1, numel(paOrder));
+for pi = 1:numel(paOrder)
+    idx = find(strcmp(algoPAs, paOrder{pi}) & strcmp(algoPCs, fixedPC) & strcmp(algoModes, 'DCC'), 1);
+    if isempty(idx)
+        idx = find(strcmp(algoPAs, paOrder{pi}) & strcmp(algoPCs, fixedPC), 1);
+    end
+    if ~isempty(idx)
+        barDelay(pi) = avgSyncMs(idx);
+        lineESR(pi) = avgESR(idx);
+    end
+end
+leftColor = [0.00 0.45 0.74];
+rightColor = [0.85 0.33 0.10];
+set(gca, 'YColor', leftColor);
+yyaxis left;
+b = bar(1:numel(paOrder), barDelay, 0.58);
+b.FaceColor = leftColor;
+b.EdgeColor = [0.10 0.25 0.40];
+ylabel('Sync delay (ms)');
+yyaxis right;
+hLine = plotSmoothCurve(1:numel(paOrder), lineESR, rightColor);
+ylabel('Average ESR (bit/s/Hz)');
+set(gca, 'XTick', 1:numel(paOrder), 'XTickLabel', paLabels, 'FontSize', 12);
+ax3 = gca;
+ax3.YAxis(1).Color = leftColor;
+ax3.YAxis(2).Color = rightColor;
+xlabel('Power allocation method');
+title('PA Ablation under R-MMSE Precoding: Delay vs ESR');
+grid on; box on;
+saveFigure(fig3, savePath, isSaveFig, 'FigA7_RMMSE_PA_Latency_Ablation');
+
+%% Save data table
+if isSaveData
+    T = table((1:numel(algoTable)).', algoNames, algoPAs, algoPCs, algoModes, ...
+        avgESR, avgSyncMs, avgControlMs, avgComputeMs, avgBytes, avgRounds, ...
+        'VariableNames', {'id', 'algorithm', 'pa', 'pc', 'mode', ...
+        'avg_esr', 'sync_delay_ms', 'control_delay_ms', 'pa_compute_ms', ...
+        'sync_bytes', 'sync_rounds'});
+    writetable(T, fullfile(dataPath, 'Sync_Ablation_Table.csv'));
+    save(fullfile(dataPath, 'Sync_Ablation_Results.mat'), 'Ablation', 'T');
+    fprintf('[INFO] Sync ablation table saved to: %s\n', ...
+        fullfile(dataPath, 'Sync_Ablation_Table.csv'));
+end
+
+fprintf('[INFO] 3 synchronization ablation figures generated successfully.\n');
+end
+
+function label = shortAlgoName(algo)
+label = sprintf('%s+%s', displayPA(algo.pa), displayPC(algo.pc));
+end
+
+function label = displayPA(paKey)
+switch paKey
+    case 'baseline'
+        label = 'Baseline';
+    case 'random'
+        label = 'Random';
+    otherwise
+        label = paKey;
+end
+end
+
+function label = displayPC(pcKey)
+switch pcKey
+    case 'LMMSE'
+        label = 'L-MMSE';
+    case 'RMMSE'
+        label = 'R-MMSE';
+    case 'LMMSE_G'
+        label = 'L-MMSE-G';
+    otherwise
+        label = pcKey;
+end
+end
+
+function h = plotSmoothCurve(x, y, color)
+valid = isfinite(x) & isfinite(y);
+xv = x(valid);
+yv = y(valid);
+if numel(xv) >= 3
+    xq = linspace(min(xv), max(xv), 240);
+    yq = interp1(xv, yv, xq, 'pchip');
+    h = plot(xq, yq, '-', 'Color', color, 'LineWidth', 2.8);
+    hold on;
+    plot(xv, yv, 'o', 'Color', color, 'MarkerFaceColor', color, ...
+        'MarkerEdgeColor', 'w', 'LineWidth', 1.2, 'MarkerSize', 6);
+else
+    h = plot(xv, yv, '-o', 'Color', color, 'LineWidth', 2.8, ...
+        'MarkerFaceColor', color);
+end
+end
+
+function saveFigure(fig, savePath, isSaveFig, baseName)
+if ~isSaveFig; return; end
+saveas(fig, fullfile(savePath, [baseName '.png']));
+saveas(fig, fullfile(savePath, [baseName '.fig']));
+end

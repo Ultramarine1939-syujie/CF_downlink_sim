@@ -281,6 +281,11 @@ matlab -batch "cd('C:\Users\Admin\Documents\个人资料\CF_downlink_sim'); run"
 - 各 SNR 点最佳算法排名
 - 功率分配计算时间对比
 - 通信开销对比
+- 预编码 × 功率分配的同步时延消融图（Pareto、热力图、R-MMSE 固定对比）
+
+同步时延消融结果还会导出到：
+- `main/SimulationData/Sync_Ablation_Table.csv`
+- `main/SimulationData/Sync_Ablation_Results.mat`
 
 ---
 
@@ -322,6 +327,11 @@ useCache = true;    % 是否启用缓存
 | 更宽 SNR 范围 | `SNR_dB=-10:2:30` | 更细粒度 |
 | 仅跑传统算法 | `runStage=1` | 跳过 GNN 部分 |
 | 仅重跑 GNN | `runStage=2` | 传统方法从缓存加载 |
+| 关闭同步时延消融 | `enableSyncAblation=false` | 不生成 FigA5-FigA7 |
+
+同步时延模型可通过 `syncAblation` 配置块调节，关键参数包括
+`fronthaulMbps`、`syncRttMs`、`dccPayloadRatio`、`wmmseRounds` 和
+`psoRounds`。
 
 ### v3.0 缓存机制详解
 
