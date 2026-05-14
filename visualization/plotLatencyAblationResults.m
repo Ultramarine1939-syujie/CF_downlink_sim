@@ -9,6 +9,15 @@ algoNames = {algoTable.name}.';
 algoPAs = {algoTable.pa}.';
 algoPCs = {algoTable.pc}.';
 algoModes = {algoTable.mode}.';
+if isfield(algoTable, 'pcArch')
+    pcArch = {algoTable.pcArch}.';
+    paArch = {algoTable.paArch}.';
+    isDistributed = [algoTable.isDistributed].';
+else
+    pcArch = repmat({'unknown'}, numel(algoTable), 1);
+    paArch = repmat({'unknown'}, numel(algoTable), 1);
+    isDistributed = false(numel(algoTable), 1);
+end
 
 avgESR = Ablation.avgESR(:);
 avgSyncMs = mean(Ablation.sync_delay_ms, 2);
@@ -17,12 +26,14 @@ avgComputeMs = mean(Ablation.compute_delay_ms, 2, 'omitnan');
 avgBytes = mean(Ablation.sync_bytes, 2);
 avgRounds = mean(Ablation.sync_rounds, 2);
 
-paOrder = {'GNN', 'WMMSE', 'PSO', 'EPA', 'random', 'baseline'};
-paLabels = {'GNN', 'WMMSE', 'PSO', 'EPA', 'Random', 'Baseline'};
+paOrder = {'LocalGNN', 'GNN', 'DWMMSE', 'WMMSE', 'PSO', 'EPA', 'random', 'baseline'};
+paLabels = {'Local-GNN', 'GNN', 'D-WMMSE', 'WMMSE', 'PSO', 'EPA', 'Random', 'Baseline'};
 pcOrder = {'MR', 'LMMSE', 'RMMSE', 'LMMSE_G'};
 pcLabels = {'MR', 'L-MMSE', 'R-MMSE', 'L-MMSE-G'};
 paColors = [
+    0.00 0.52 0.58
     0.45 0.00 0.75
+    0.95 0.55 0.10
     0.85 0.15 0.15
     0.00 0.45 0.75
     0.00 0.60 0.00
@@ -38,66 +49,56 @@ if isSaveData && ~exist(dataPath, 'dir')
     mkdir(dataPath);
 end
 
-%% Fig A5: ESR-sync Pareto scatter
-fig1 = figure('Visible', 'off', 'Position', [100 100 1120 620]);
-ax1 = axes(fig1);
-hold(ax1, 'on');
+%% Fig A5_2: Best distributed-precode result per PA, sorted by ESR
 modeMask = strcmp(algoModes, 'DCC');
 if ~any(modeMask)
     modeMask = true(size(algoModes));
 end
+distPCMask = strcmp(pcArch, 'distributed');
+paFocusMask = modeMask & distPCMask;
+bestIdxByPA = nan(numel(paOrder), 1);
+bestESRByPA = nan(numel(paOrder), 1);
+bestDelayByPA = nan(numel(paOrder), 1);
+bestComputeByPA = nan(numel(paOrder), 1);
+bestControlByPA = nan(numel(paOrder), 1);
+bestLabelByPA = strings(numel(paOrder), 1);
 for pi = 1:numel(paOrder)
-    for ci = 1:numel(pcOrder)
-        idx = find(modeMask & strcmp(algoPAs, paOrder{pi}) & strcmp(algoPCs, pcOrder{ci}));
-        if isempty(idx); continue; end
-        scatter(ax1, max(avgSyncMs(idx), 1e-3), avgESR(idx), 70, ...
-            'Marker', pcMarkers{ci}, 'MarkerEdgeColor', paColors(pi, :), ...
-            'MarkerFaceColor', paColors(pi, :), 'MarkerFaceAlpha', 0.72);
-    end
+    idxAll = find(paFocusMask & strcmp(algoPAs, paOrder{pi}));
+    if isempty(idxAll); continue; end
+    [~, bestLocal] = max(avgESR(idxAll));
+    bestIdx = idxAll(bestLocal);
+    bestIdxByPA(pi) = bestIdx;
+    bestESRByPA(pi) = avgESR(bestIdx);
+    bestDelayByPA(pi) = avgSyncMs(bestIdx);
+    bestComputeByPA(pi) = avgComputeMs(bestIdx);
+    bestControlByPA(pi) = avgControlMs(bestIdx);
+    bestLabelByPA(pi) = string(sprintf('%s+%s', paLabels{pi}, displayPC(algoPCs{bestIdx})));
 end
-set(ax1, 'XScale', 'log');
-xlabel('Modeled synchronization delay (ms)');
+validBest = isfinite(bestESRByPA);
+[~, rankOrder] = sort(bestESRByPA(validBest), 'descend');
+validPAIdx = find(validBest);
+rankPAIdx = validPAIdx(rankOrder);
+
+figA52 = figure('Visible', 'off', 'Position', [100 100 1080 560]);
+axA52 = axes(figA52);
+hold(axA52, 'on');
+rankColors = paColors(rankPAIdx, :);
+b = bar(axA52, 1:numel(rankPAIdx), bestESRByPA(rankPAIdx), 0.62, 'FaceColor', 'flat');
+b.CData = rankColors;
+for ri = 1:numel(rankPAIdx)
+    pi = rankPAIdx(ri);
+    text(axA52, ri, bestESRByPA(pi) + 0.12, ...
+        sprintf('delay %.3g ms\ncompute %.3g ms', bestDelayByPA(pi), bestComputeByPA(pi)), ...
+        'HorizontalAlignment', 'center', 'FontSize', 8);
+end
+set(axA52, 'XTick', 1:numel(rankPAIdx), 'XTickLabel', cellstr(bestLabelByPA(rankPAIdx)), ...
+    'XTickLabelRotation', 20, 'FontSize', 11);
 ylabel('Average ESR (bit/s/Hz)');
-title('Ablation Pareto: Power Allocation + Precoding vs Synchronization Delay');
-grid on; box on; set(ax1, 'FontSize', 12);
-
-% Reader guide: use two adjacent legend boxes with the same visual style.
-legendAxPA = axes(fig1, 'Position', [0.15 0.78 0.38 0.10], 'Visible', 'off');
-hold(legendAxPA, 'on');
-paLegendHandles = gobjects(numel(paOrder), 1);
-for pi = 1:numel(paOrder)
-    paLegendHandles(pi) = plot(legendAxPA, nan, nan, 'o', ...
-        'MarkerEdgeColor', paColors(pi, :), 'MarkerFaceColor', paColors(pi, :), ...
-        'LineStyle', 'none', 'MarkerSize', 7, 'DisplayName', paLabels{pi});
-end
-lgdPA = legend(legendAxPA, paLegendHandles, paLabels, 'Orientation', 'horizontal', ...
-    'FontSize', 9, 'Box', 'on');
-title(lgdPA, 'Color: power allocation');
-
-legendAxPC = axes(fig1, 'Position', [0.15 0.68 0.33 0.10], 'Visible', 'off');
-hold(legendAxPC, 'on');
-pcLegendHandles = gobjects(numel(pcOrder), 1);
-for ci = 1:numel(pcOrder)
-    pcLegendHandles(ci) = plot(legendAxPC, nan, nan, pcMarkers{ci}, ...
-        'MarkerEdgeColor', [0.15 0.15 0.15], 'MarkerFaceColor', [0.75 0.75 0.75], ...
-        'LineStyle', 'none', 'MarkerSize', 7, 'DisplayName', pcLabels{ci});
-end
-lgdPC = legend(legendAxPC, pcLegendHandles, pcLabels, 'Orientation', 'horizontal', ...
-    'FontSize', 9, 'Box', 'on');
-title(lgdPC, 'Marker: precoder');
-
-% Label the best few ESR-delay tradeoffs.
-score = avgESR ./ max(avgSyncMs, 1e-3);
-score(~modeMask) = -inf;
-[~, labelIdx] = sort(score, 'descend');
-labelIdx = labelIdx(1:min(5, numel(labelIdx)));
-for ii = 1:numel(labelIdx)
-    idx = labelIdx(ii);
-    if ~isfinite(score(idx)); continue; end
-    text(ax1, max(avgSyncMs(idx), 1e-3) * 1.05, avgESR(idx), shortAlgoName(algoTable(idx)), ...
-        'FontSize', 8, 'Interpreter', 'none');
-end
-saveFigure(fig1, savePath, isSaveFig, 'FigA5_SyncLatency_ESR_Pareto');
+xlabel('Best DCC + distributed-precode combination for each PA');
+title({'A5\_2 PA Ranking by Best Achievable ESR', ...
+    'Higher bar = stronger power allocation under the same distributed-precode constraint'});
+grid on; box on;
+saveFigure(figA52, savePath, isSaveFig, 'FigA5_2_PA_Best_ESR_Ranking');
 
 %% Fig A6: DCC PA x PC heatmap
 fig2 = figure('Visible', 'off', 'Position', [100 100 900 520]);
@@ -171,8 +172,9 @@ saveFigure(fig3, savePath, isSaveFig, 'FigA7_RMMSE_PA_Latency_Ablation');
 %% Save data table
 if isSaveData
     T = table((1:numel(algoTable)).', algoNames, algoPAs, algoPCs, algoModes, ...
-        avgESR, avgSyncMs, avgControlMs, avgComputeMs, avgBytes, avgRounds, ...
+        pcArch, paArch, isDistributed, avgESR, avgSyncMs, avgControlMs, avgComputeMs, avgBytes, avgRounds, ...
         'VariableNames', {'id', 'algorithm', 'pa', 'pc', 'mode', ...
+        'pc_arch', 'pa_arch', 'is_distributed', ...
         'avg_esr', 'sync_delay_ms', 'control_delay_ms', 'pa_compute_ms', ...
         'sync_bytes', 'sync_rounds'});
     writetable(T, fullfile(dataPath, 'Sync_Ablation_Table.csv'));
@@ -190,6 +192,8 @@ end
 
 function label = displayPA(paKey)
 switch paKey
+    case 'LocalGNN'
+        label = 'Local-GNN';
     case 'baseline'
         label = 'Baseline';
     case 'random'

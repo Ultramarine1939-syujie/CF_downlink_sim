@@ -10,17 +10,19 @@ algoPAs = {algoTable.pa};
 algoPCs = {algoTable.pc};
 algoModes = {algoTable.mode};
 
-paOrder = {'GNN', 'WMMSE', 'PSO', 'EPA', 'random', 'baseline'};
-paLabels = {'GNN', 'WMMSE', 'PSO', 'EPA', 'Random', 'Baseline'};
+paOrder = {'LocalGNN', 'GNN', 'DWMMSE', 'WMMSE', 'PSO', 'EPA', 'random', 'baseline'};
+paLabels = {'Local-GNN', 'GNN', 'D-WMMSE', 'WMMSE', 'PSO', 'EPA', 'Random', 'Baseline'};
 paColors = [
+    0.00 0.52 0.58
     0.45 0.00 0.75
+    0.95 0.55 0.10
     0.85 0.15 0.15
     0.00 0.45 0.75
     0.00 0.60 0.00
     0.55 0.55 0.55
     0.20 0.20 0.20
 ];
-paMarkers = {'o', 's', '^', 'd', 'v', 'p'};
+paMarkers = {'x', 'o', 'h', 's', '^', 'd', 'v', 'p'};
 
 FS_AXIS = 12;
 FS_TITLE = 13;
@@ -43,7 +45,7 @@ for pi = 1:numel(paOrder)
     end
     if isempty(idx); continue; end
     lw = LW_BASE;
-    if strcmp(paOrder{pi}, 'GNN'); lw = LW_GNN; end
+    if any(strcmp(paOrder{pi}, {'GNN', 'LocalGNN'})); lw = LW_GNN; end
     plot(SNR_dB, ESR_mean(idx, :), ['-' paMarkers{pi}], ...
         'Color', paColors(pi, :), 'LineWidth', lw, 'MarkerSize', 7);
     legendLabels{end+1} = sprintf('%s + %s (%s)', paLabels{pi}, ...
@@ -68,7 +70,7 @@ for pi = 1:numel(paOrder)
     end
     if isempty(idx); continue; end
     lw = LW_BASE;
-    if strcmp(paOrder{pi}, 'GNN'); lw = LW_GNN; end
+    if any(strcmp(paOrder{pi}, {'GNN', 'LocalGNN'})); lw = LW_GNN; end
     plot(SNR_dB, ESR_mean(idx, :), ['-' paMarkers{pi}], ...
         'Color', paColors(pi, :), 'LineWidth', lw, 'MarkerSize', 7);
     legendLabels{end+1} = sprintf('%s (%s)', paLabels{pi}, algoModes{idx}); %#ok<AGROW>
@@ -91,7 +93,7 @@ else
     gapPct = (ESR_mean(gnnIdx, :) - ESR_mean(wmmseIdx, :)) ./ max(ESR_mean(wmmseIdx, :), eps) * 100;
     b = bar(SNR_dB, gapPct, 0.58);
     b.FaceColor = 'flat';
-    b.CData = repmat(paColors(1, :), num_snr, 1);
+    b.CData = repmat(paColors(2, :), num_snr, 1);
     neg = gapPct < 0;
     b.CData(neg, :) = repmat([0.85 0.15 0.15], sum(neg), 1);
     hold on; yline(0, 'k--', 'LineWidth', 1);
@@ -126,8 +128,9 @@ wmmseBestIdx = getBestCurve(ESR_mean, algoTable, 'WMMSE', 'DCC');
 if isempty(wmmseBestIdx); wmmseBestIdx = getBestCurve(ESR_mean, algoTable, 'WMMSE', 'All'); end
 wmmseAvg = mean(ESR_mean(wmmseBestIdx, :));
 
-notes = containers.Map(paOrder, {'learned power split', 'iterative reference', ...
-    'heuristic optimizer', 'equal power', 'random baseline', 'large-scale baseline'});
+notes = containers.Map(paOrder, {'AP-local learned split', 'full-graph learned split', ...
+    'fixed-round distributed update', 'iterative reference', 'heuristic optimizer', 'equal power', ...
+    'random baseline', 'large-scale baseline'});
 
 for pi = 1:numel(paOrder)
     idx = getBestCurve(ESR_mean, algoTable, paOrder{pi}, 'DCC');
@@ -239,10 +242,10 @@ end
 function plotTimePair(SNR_dB, wmmseTime, gnnTime, paColors, FS_AXIS, FS_TITLE, FS_LEG, titleText, subText)
 nexttile;
 semilogy(SNR_dB, wmmseTime * 1000, '-s', ...
-    'Color', paColors(2, :), 'LineWidth', 2.2, 'MarkerSize', 7);
+    'Color', paColors(4, :), 'LineWidth', 2.2, 'MarkerSize', 7);
 hold on;
 semilogy(SNR_dB, gnnTime * 1000, '-o', ...
-    'Color', paColors(1, :), 'LineWidth', 2.8, 'MarkerSize', 7);
+    'Color', paColors(2, :), 'LineWidth', 2.8, 'MarkerSize', 7);
 xlabel('SNR (dB)', 'FontSize', FS_AXIS);
 ylabel('Time (ms)', 'FontSize', FS_AXIS);
 title({titleText, subText}, 'FontSize', FS_TITLE);
@@ -254,7 +257,7 @@ function plotSpeedup(SNR_dB, speedup, paColors, num_snr, FS_AXIS, FS_TITLE, titl
 nexttile;
 b = bar(SNR_dB, speedup, 0.58);
 b.FaceColor = 'flat';
-b.CData = repmat(paColors(1, :), num_snr, 1);
+b.CData = repmat(paColors(2, :), num_snr, 1);
 slower = speedup < 1;
 b.CData(slower, :) = repmat([0.85 0.15 0.15], sum(slower), 1);
 hold on; yline(1, 'k--', 'LineWidth', 1);

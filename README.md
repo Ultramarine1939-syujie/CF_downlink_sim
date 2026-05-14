@@ -197,12 +197,16 @@ python train_gnn.py --data "../data/gnn_training/gnn_training_data_20260428_1915
 
 # 使用 glob 匹配多个数据文件（推荐）
 python train_gnn.py --data "../data/gnn_training/*.mat" --epochs 300
+
+# 训练严格分布式的 AP-local GNN
+python train_gnn_local.py --data "../data/gnn_training/*.mat" --epochs 120
 ```
 
 #### 4.2 快速测试（验证流程是否通畅）
 
 ```bash
 python train_gnn.py --data "../data/gnn_training/*.mat" --epochs 10 --batch_size 64
+python train_gnn_local.py --data "../data/gnn_training/*.mat" --epochs 10
 ```
 
 #### 4.3 完整参数列表
@@ -228,6 +232,7 @@ python train_gnn.py --data "../data/gnn_training/*.mat" --epochs 10 --batch_size
 | 文件名 | 说明 |
 |--------|------|
 | `best_gat_gnn_power.pt` | **验证集最优模型**（推荐使用） |
+| `best_local_gnn_power.pt` | **Local-GNN 最优模型**（严格分布式 GNN 候选） |
 | `final_gat_gnn_power.pt` | 最后一轮模型 |
 | `training_log.csv` | 训练过程指标记录 |
 
@@ -244,10 +249,11 @@ python train_gnn.py --data "../data/gnn_training/*.mat" --epochs 10 --batch_size
 ```
 CF_downlink_sim/
 └── models/
-    └── best_gat_gnn_power.pt      # GNN 推理模型（Step 4 产出）
+    ├── best_gat_gnn_power.pt      # 全图 GNN 推理模型（Step 4 产出）
+    └── best_local_gnn_power.pt    # Local-GNN 推理模型（可选，缺失则回退 EPA）
 ```
 
-> ⚠️ **重要**：如果缺少这些文件，GNN 算法会自动回退到 EPA（等功率分配），不影响其他算法运行。
+> ⚠️ **重要**：如果缺少这些文件，对应 GNN 算法会自动回退到 EPA（等功率分配），不影响其他算法运行。
 
 #### 5.2 启动仿真
 
@@ -384,7 +390,7 @@ main/SimulationData/
 
 ## 🔬 算法组合说明
 
-仿真系统自动遍历 **48 种算法组合**（6 PA × 4 PC × 2 Mode）：
+仿真系统自动遍历 **64 种算法组合**（8 PA × 4 PC × 2 Mode）：
 
 ### 功率分配方法 (PA)
 
@@ -392,10 +398,14 @@ main/SimulationData/
 |------|------|--------|------|
 | **Baseline** | 传统 | O(LK) | 基于大尺度衰落距离比 |
 | **EPA** | 传统 | O(LK) | 等功率分配 |
+| **D-WMMSE** | 分布式 | O(固定轮次×LK) | 固定消息交换轮次的分布式 WMMSE 近似 |
+| **Local-GNN** | 分布式智能 | O(L×前向传播) | 每个 AP 仅用本地 AP-UE 行独立推理 |
 | **WMMSE** | 传统 | O(迭代×LK²) | 加权最小均方误差（最慢但最优） |
 | **PSO** | 传统 | O(粒子数×迭代) | 粒子群优化 |
 | **Random** | 传统 | O(LK) | 随机分配基线 |
-| **GNN** | 智能 | O(前向传播) | GAT-GNN 本地推理 |
+| **GNN** | 智能参考 | O(前向传播) | 全图 GAT-GNN 低时延参考 |
+
+主排名只统计 PC 和 PA 均满足分布式信息约束的组合。Local-GNN、D-WMMSE、EPA、Baseline、Random 可作为分布式 PA 候选；WMMSE、PSO、L-MMSE-G 和当前全图 GNN 保留为集中式/离线参考。
 
 ### 预编码方法 (PC)
 
@@ -577,8 +587,10 @@ CF_downlink_sim/
 ├── power_allocation/                  # ⚡ 功率分配算法
 │   ├── computeRhoDist.m              # Baseline（距离基线）
 │   ├── computeRhoEPA.m               # 等功率分配
+│   ├── computeRhoDistributedWMMSE.m   # 固定轮次分布式 WMMSE 近似
 │   ├── computeRhoWMMSE.m             # WMMSE（迭代优化）
 │   ├── computeRhoGNN.m               # GNN 推理接口
+│   ├── computeRhoLocalGNN.m          # AP-local GNN 分布式推理接口
 │   ├── computeRho_all_dcc_pso.m      # DCC+PSO 组合
 │   ├── functionOptimize_d_PSO.m      # PSO 优化器
 │   └── exportTrainingData.m           # 训练数据导出器
@@ -601,6 +613,8 @@ CF_downlink_sim/
 │
 ├── python/                            # 🤖 Python 智能模块
 │   ├── train_gnn.py                   # GAT-GNN 训练主脚本
+│   ├── train_gnn_local.py             # AP-local GNN 训练脚本
+│   ├── gnn_runtime_local.py           # AP-local MATLAB 推理运行时
 │   ├── dataset.py                    # 数据集加载器
 │   ├── requirements.txt              # Python 依赖清单
 │   ├── inference/                    # 推理封装

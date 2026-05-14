@@ -15,7 +15,7 @@ echo.
 echo   [1] Quick Test Mode (Recommended for first run)
 echo       - 10 snapshots/SNR, 20 epochs
 echo       - Estimated time: 10-30 minutes
-echo       - Purpose: Quick validation of GNN effectiveness
+echo       - Purpose: Quick validation of GNN and Local-GNN effectiveness
 echo.
 echo   [2] Full Run Mode
 echo       - 100 snapshots/SNR, 100 epochs
@@ -30,7 +30,7 @@ echo       - Skip data generation and model training
 echo       - Estimated time: 5-10 minutes
 echo.
 echo   [5] Smoke Tests Only (Use existing data/model)
-echo       - Validate dataset and test Python/MATLAB GNN inference
+echo       - Validate dataset and test Python/MATLAB GNN + Local-GNN inference
 echo       - Skip data generation, training, and full simulation
 echo.
 echo   [Q] Exit
@@ -39,7 +39,7 @@ echo ============================================================
 
 if not "%~1"=="" (
     set "MODE=%~1"
-    echo Select option [1/2/3/4/5/Q]: %MODE%
+    echo Select option [1/2/3/4/5/Q]: !MODE!
 ) else (
     set /p MODE="Select option [1/2/3/4/5/Q]: "
 )
@@ -108,6 +108,7 @@ echo   Run Parameters
 echo ============================================================
 echo   Snapshots/SNR:  %SNAPSHOTS_PER_SNR%
 echo   GNN epochs:     %GNN_EPOCHS%
+echo   Local-GNN epochs: %GNN_EPOCHS%
 echo   Skip data gen:  %SKIP_DATA_GEN%
 echo   Skip data val:  %SKIP_DATA_VALIDATE%
 echo   Skip GNN train: %SKIP_GNN_TRAIN%
@@ -145,6 +146,29 @@ if %ERRORLEVEL% neq 0 (
 
 set START_TIME=%TIME%
 
+set LATEST_DATA=
+for /f "delims=" %%f in ('dir /b /a-d /o-d "%DATA_DIR%\gnn_training_data_*.mat" 2^>nul') do (
+    if not defined LATEST_DATA set "LATEST_DATA=%DATA_DIR%\%%f"
+)
+
+if %SKIP_DATA_GEN%==0 (
+    if defined LATEST_DATA (
+        echo.
+        echo Existing training dataset found:
+        echo   !LATEST_DATA!
+        if /i "%~2"=="/y" (
+            echo Auto-confirm enabled: generating a new dataset.
+        ) else (
+            set "GENERATE_NEW_DATA="
+            set /p GENERATE_NEW_DATA="Generate a new training dataset? [y/N]: "
+            if /i not "!GENERATE_NEW_DATA!"=="y" (
+                set SKIP_DATA_GEN=1
+                echo Reusing existing dataset for training.
+            )
+        )
+    )
+)
+
 if %SKIP_DATA_GEN%==1 (
     echo.
     echo [SKIP] Step 1: Data generation skipped
@@ -153,7 +177,7 @@ if %SKIP_DATA_GEN%==1 (
 
 echo.
 echo ============================================================
-echo   [Step 1/3] Generating training dataset
+echo   [Step 1/7] Generating training dataset
 echo ============================================================
 echo.
 
@@ -180,7 +204,7 @@ if %SKIP_DATA_VALIDATE%==1 (
 
 echo.
 echo ============================================================
-echo   [Step 2/6] Validating latest training dataset
+echo   [Step 2/7] Validating latest training dataset
 echo ============================================================
 echo.
 
@@ -213,13 +237,13 @@ echo.
 :step3
 if %SKIP_GNN_TRAIN%==1 (
     echo.
-    echo [SKIP] Step 3: GNN training skipped
-    goto :step4
+    echo [SKIP] Step 3-4: GNN training skipped
+    goto :step5
 )
 
 echo.
 echo ============================================================
-echo   [Step 3/6] Training GNN model
+echo   [Step 3/7] Training full-graph GNN model
 echo ============================================================
 echo.
 
@@ -240,59 +264,92 @@ echo.
 :step4
 echo.
 echo ============================================================
-echo   [Step 4/6] Python GNN inference smoke test
+echo   [Step 4/7] Training AP-local GNN model
 echo ============================================================
 echo.
 
-if not exist "%MODELS_DIR%\best_gat_gnn_power.pt" (
-    echo [ERROR] best_gat_gnn_power.pt not found in models directory.
-    pause
-    exit /b 1
-)
-
-cd /d "%PROJECT_ROOT%"
-python -c "import sys, numpy as np; sys.path.insert(0, r'%PYTHON_DIR%'); from inference import GNNInferrer; inf=GNNInferrer(r'%MODELS_DIR%\best_gat_gnn_power.pt'); sg=np.abs(np.random.randn(100,20)); D=np.ones((100,20)); rho=inf.infer(sg,D,0.3,10.0); assert rho.shape==(100,20); assert np.isfinite(rho).all(); assert abs(float(rho.sum())-1000.0)<1e-6; print('Python inference smoke OK: rho sum=', float(rho.sum()))"
+cd /d "%PYTHON_DIR%"
+python train_gnn_local.py --data "%LATEST_DATA%" --epochs %GNN_EPOCHS% --output_dir "%MODELS_DIR%"
 
 if %ERRORLEVEL% neq 0 (
     echo.
-    echo [ERROR] Python GNN inference smoke test failed!
+    echo [ERROR] Local-GNN training failed!
     pause
     exit /b 1
 )
 
 echo.
-echo [OK] Python GNN inference smoke test completed
+echo [OK] Local-GNN training completed
+echo.
+
+:step5
+echo.
+echo ============================================================
+echo   [Step 5/7] Python GNN inference smoke tests
+echo ============================================================
+echo.
+
+if exist "%MODELS_DIR%\best_gat_gnn_power.pt" (
+    cd /d "%PROJECT_ROOT%"
+    python -c "import sys, numpy as np; sys.path.insert(0, r'%PYTHON_DIR%'); from inference import GNNInferrer; inf=GNNInferrer(r'%MODELS_DIR%\best_gat_gnn_power.pt'); sg=np.abs(np.random.randn(100,20)); D=np.ones((100,20)); rho=inf.infer(sg,D,0.3,10.0); assert rho.shape==(100,20); assert np.isfinite(rho).all(); assert abs(float(rho.sum())-1000.0)<1e-6; print('Python full-graph GNN smoke OK: rho sum=', float(rho.sum()))"
+
+    if !ERRORLEVEL! neq 0 (
+        echo.
+        echo [ERROR] Python full-graph GNN inference smoke test failed!
+        pause
+        exit /b 1
+    )
+) else (
+    echo [WARN] best_gat_gnn_power.pt not found; full-graph GNN will fall back to EPA in MATLAB simulation.
+)
+
+if exist "%MODELS_DIR%\best_local_gnn_power.pt" (
+    cd /d "%PROJECT_ROOT%"
+    python -c "import sys, numpy as np; sys.path.insert(0, r'%PYTHON_DIR%'); import gnn_runtime_local; sg=np.abs(np.random.randn(100,20)).astype('float32'); D=np.ones((100,20), dtype='float32'); out=gnn_runtime_local.infer(r'%MODELS_DIR%\best_local_gnn_power.pt', sg, D, 10.0, 0.3); rho=out['rho']; assert rho.shape==(100,20); assert np.isfinite(rho).all(); assert np.allclose(rho.sum(axis=1), 10.0, atol=1e-5); print('Python Local-GNN smoke OK: rho sum=', float(rho.sum()))"
+
+    if !ERRORLEVEL! neq 0 (
+        echo.
+        echo [ERROR] Python Local-GNN inference smoke test failed!
+        pause
+        exit /b 1
+    )
+) else (
+    echo [WARN] best_local_gnn_power.pt not found; Local-GNN will fall back to EPA in MATLAB simulation.
+)
+
+echo.
+echo [OK] Python inference smoke tests completed
 echo.
 
 echo.
 echo ============================================================
-echo   [Step 5/6] MATLAB GNN bridge smoke test
+echo   [Step 6/7] MATLAB GNN bridge smoke tests
 echo ============================================================
 echo.
 
-matlab -batch "cd('%PROJECT_ROOT%'); addpath(genpath(pwd)); D=ones(100,20); gain=abs(rand(100,20)); Hhat=zeros(100,1,20); modelPath=fullfile(pwd,'models','best_gat_gnn_power.pt'); [rho1,t1]=computeRhoGNN(Hhat,D,gain,10,modelPath,0.3); [rho2,t2]=computeRhoGNN(Hhat,D,gain,10,modelPath,0.3); assert(all(isfinite(rho1(:)))); assert(all(isfinite(rho2(:)))); assert(abs(sum(rho1(:))-1000)<1e-3); assert(abs(sum(rho2(:))-1000)<1e-3); assert(isfield(t2,'forward_sec') && t2.forward_sec > 0); fprintf('MATLAB bridge smoke OK: rho1 sum=%%.6f, rho2 sum=%%.6f, second forward=%%.6fs, second total=%%.6fs\n', sum(rho1(:)), sum(rho2(:)), t2.forward_sec, t2.total_sec);"
+matlab -batch "cd('%PROJECT_ROOT%'); addpath(genpath(pwd)); D=ones(100,20); gain=abs(rand(100,20)); Hhat=zeros(100,1,20); modelPath=fullfile(pwd,'models','best_gat_gnn_power.pt'); localPath=fullfile(pwd,'models','best_local_gnn_power.pt'); [rho1,t1]=computeRhoGNN(Hhat,D,gain,10,modelPath,0.3); [rho2,t2]=computeRhoGNN(Hhat,D,gain,10,modelPath,0.3); [rhoL,tL]=computeRhoLocalGNN(Hhat,D,gain,10,localPath,0.3); assert(all(isfinite(rho1(:)))); assert(all(isfinite(rho2(:)))); assert(all(isfinite(rhoL(:)))); assert(abs(sum(rho1(:))-1000)<1e-3); assert(abs(sum(rho2(:))-1000)<1e-3); assert(abs(sum(rhoL(:))-1000)<1e-3); assert(isfield(t2,'forward_sec') && t2.forward_sec > 0); assert(isfield(tL,'forward_sec') && tL.forward_sec > 0); fprintf('MATLAB bridge smoke OK: GNN sum=%%.6f, Local-GNN sum=%%.6f, GNN forward=%%.6fs, Local forward=%%.6fs\n', sum(rho2(:)), sum(rhoL(:)), t2.forward_sec, tL.forward_sec);"
 
 if %ERRORLEVEL% neq 0 (
     echo.
-    echo [ERROR] MATLAB GNN bridge smoke test failed!
+    echo [ERROR] MATLAB GNN bridge smoke tests failed!
     pause
     exit /b 1
 )
 
 echo.
-echo [OK] MATLAB GNN bridge smoke test completed
+echo [OK] MATLAB GNN bridge smoke tests completed
 echo.
 
-:step6
+:step7
 if %RUN_SIMULATION%==0 (
     echo.
-    echo [SKIP] Step 6: Full simulation skipped
+    echo [SKIP] Step 7: Full simulation skipped
     goto :done
 )
 
 echo.
 echo ============================================================
-echo   [Step 6/6] Running Cell-Free simulation
+echo   [Step 7/7] Running Cell-Free simulation
 echo ============================================================
 echo.
 
@@ -324,13 +381,15 @@ echo     - Data:    main\SimulationData\
 echo     - Models:  models\
 echo.
 echo   Validation criteria:
-echo     GNN ESR ^>= Dist ^> EPA  = Success
-echo     GNN ESR ^<  EPA          = Still has issues
+echo     Local-GNN enters distributed main ranking = pipeline updated
+echo     Local-GNN ESR ^> EPA                    = strong local model
+echo     Local-GNN ESR ~= EPA                    = model absent or undertrained
 echo.
 echo   Smoke tests completed:
 echo     - Dataset validation
-echo     - Python GNN inference
-echo     - MATLAB computeRhoGNN bridge with cached second call
+echo     - Python full-graph GNN inference
+echo     - Python Local-GNN inference when model exists
+echo     - MATLAB computeRhoGNN and computeRhoLocalGNN bridges
 echo ============================================================
 echo.
 
