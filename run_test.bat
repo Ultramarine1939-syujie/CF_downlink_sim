@@ -18,8 +18,8 @@ echo       - Estimated time: 10-30 minutes
 echo       - Purpose: Quick validation of GNN and Local-GNN effectiveness
 echo.
 echo   [2] Full Run Mode
-echo       - 100 snapshots/SNR, 100 epochs
-echo       - Estimated time: 1-2 hours
+echo       - snapshots/SNR from config/getDefaultParams.m, 100 epochs
+echo       - Estimated time: depends on config/getDefaultParams.m
 echo       - Purpose: Generate paper-quality results
 echo.
 echo   [3] Custom Mode
@@ -33,26 +33,32 @@ echo   [5] Smoke Tests Only (Use existing data/model)
 echo       - Validate dataset and test Python/MATLAB GNN + Local-GNN inference
 echo       - Skip data generation, training, and full simulation
 echo.
+echo   [6] Redraw Figures Only (Use existing simulation results)
+echo       - Replot figures from main\SimulationData\
+echo       - Skip data generation, training, smoke tests, and full simulation
+echo.
 echo   [Q] Exit
 echo.
 echo ============================================================
 
 if not "%~1"=="" (
     set "MODE=%~1"
-    echo Select option [1/2/3/4/5/Q]: !MODE!
+    echo Select option [1/2/3/4/5/6/Q]: !MODE!
 ) else (
-    set /p MODE="Select option [1/2/3/4/5/Q]: "
+    set /p MODE="Select option [1/2/3/4/5/6/Q]: "
 )
 
 if /i "!MODE!"=="Q" exit /b 0
 if /i "!MODE!"=="q" exit /b 0
 
-set SNAPSHOTS_PER_SNR=100
+set SNAPSHOTS_PER_SNR=
 set GNN_EPOCHS=100
 set SKIP_DATA_GEN=0
 set SKIP_DATA_VALIDATE=0
 set SKIP_GNN_TRAIN=0
+set SKIP_LOCAL_GNN_TRAIN=0
 set RUN_SIMULATION=1
+set REDRAW_FIGURES_ONLY=0
 
 if "!MODE!"=="1" (
     echo.
@@ -72,8 +78,7 @@ if "!MODE!"=="3" (
     echo.
     echo [Selected] Custom Mode
     echo.
-    set /p SNAPSHOTS_PER_SNR="Snapshots per SNR [default 100]: "
-    if "!SNAPSHOTS_PER_SNR!"=="" set SNAPSHOTS_PER_SNR=100
+    set /p SNAPSHOTS_PER_SNR="Snapshots per SNR [blank = config default]: "
     set /p GNN_EPOCHS="GNN training epochs [default 100]: "
     if "!GNN_EPOCHS!"=="" set GNN_EPOCHS=100
     goto :start
@@ -97,6 +102,17 @@ if "!MODE!"=="5" (
     goto :start
 )
 
+if "!MODE!"=="6" (
+    echo.
+    echo [Selected] Redraw Figures Only Mode
+    set SKIP_DATA_GEN=1
+    set SKIP_DATA_VALIDATE=1
+    set SKIP_GNN_TRAIN=1
+    set RUN_SIMULATION=0
+    set REDRAW_FIGURES_ONLY=1
+    goto :start
+)
+
 echo [ERROR] Invalid option!
 pause
 exit /b 1
@@ -106,13 +122,19 @@ echo.
 echo ============================================================
 echo   Run Parameters
 echo ============================================================
+if defined SNAPSHOTS_PER_SNR (
 echo   Snapshots/SNR:  %SNAPSHOTS_PER_SNR%
+) else (
+echo   Snapshots/SNR:  config default
+)
 echo   GNN epochs:     %GNN_EPOCHS%
 echo   Local-GNN epochs: %GNN_EPOCHS%
 echo   Skip data gen:  %SKIP_DATA_GEN%
 echo   Skip data val:  %SKIP_DATA_VALIDATE%
 echo   Skip GNN train: %SKIP_GNN_TRAIN%
+echo   Local model:    auto-detect existing best_local_gnn_power.pt
 echo   Run simulation: %RUN_SIMULATION%
+echo   Redraw only:    %REDRAW_FIGURES_ONLY%
 echo ============================================================
 echo.
 
@@ -127,15 +149,10 @@ if /i "%CONFIRM%"=="n" (
     exit /b 0
 )
 
+set START_TIME=%TIME%
+
 if not exist "%DATA_DIR%" mkdir "%DATA_DIR%"
 if not exist "%MODELS_DIR%" mkdir "%MODELS_DIR%"
-
-where python >nul 2>&1
-if %ERRORLEVEL% neq 0 (
-    echo [ERROR] Python was not found in PATH.
-    pause
-    exit /b 1
-)
 
 where matlab >nul 2>&1
 if %ERRORLEVEL% neq 0 (
@@ -144,7 +161,14 @@ if %ERRORLEVEL% neq 0 (
     exit /b 1
 )
 
-set START_TIME=%TIME%
+if %REDRAW_FIGURES_ONLY%==1 goto :redrawfigures
+
+where python >nul 2>&1
+if %ERRORLEVEL% neq 0 (
+    echo [ERROR] Python was not found in PATH.
+    pause
+    exit /b 1
+)
 
 set LATEST_DATA=
 for /f "delims=" %%f in ('dir /b /a-d /o-d "%DATA_DIR%\gnn_training_data_*.mat" 2^>nul') do (
@@ -181,7 +205,11 @@ echo   [Step 1/7] Generating training dataset
 echo ============================================================
 echo.
 
-set MATLAB_CMD=addpath(genpath(pwd)); exportTrainingData([], %SNAPSHOTS_PER_SNR%);
+if defined SNAPSHOTS_PER_SNR (
+    set "MATLAB_CMD=addpath(genpath(pwd)); exportTrainingData([], %SNAPSHOTS_PER_SNR%);"
+) else (
+    set "MATLAB_CMD=addpath(genpath(pwd)); exportTrainingData();"
+)
 matlab -batch "cd('%PROJECT_ROOT%'); %MATLAB_CMD%"
 
 if %ERRORLEVEL% neq 0 (
@@ -262,6 +290,39 @@ echo [OK] GNN training completed
 echo.
 
 :step4
+echo.
+echo ============================================================
+echo   [Step 4/7] Checking AP-local GNN model
+echo ============================================================
+echo.
+
+set SKIP_LOCAL_GNN_TRAIN=0
+if exist "%MODELS_DIR%\best_local_gnn_power.pt" (
+    echo Existing Local-GNN model found:
+    for %%F in ("%MODELS_DIR%\best_local_gnn_power.pt") do (
+        echo   Path: %%~fF
+        echo   Size: %%~zF bytes
+        echo   Last modified: %%~tF
+    )
+    echo.
+    if /i "%~2"=="/y" (
+        echo Auto-confirm enabled: retraining Local-GNN and replacing the existing model.
+    ) else (
+        set "RETRAIN_LOCAL_GNN="
+        set /p RETRAIN_LOCAL_GNN="Retrain Local-GNN and replace the existing model? [y/N]: "
+        if /i not "!RETRAIN_LOCAL_GNN!"=="y" (
+            set SKIP_LOCAL_GNN_TRAIN=1
+            echo Reusing existing Local-GNN model.
+        )
+    )
+)
+
+if !SKIP_LOCAL_GNN_TRAIN!==1 (
+    echo.
+    echo [SKIP] Step 4: Local-GNN training skipped
+    goto :step5
+)
+
 echo.
 echo ============================================================
 echo   [Step 4/7] Training AP-local GNN model
@@ -367,6 +428,36 @@ echo.
 echo [OK] Simulation completed
 echo.
 
+goto :done
+
+:redrawfigures
+echo.
+echo ============================================================
+echo   [Redraw] Regenerating figures from saved simulation results
+echo ============================================================
+echo.
+
+if not exist "%PROJECT_ROOT%main\SimulationData\Simulation_Results_v2.mat" (
+    echo [ERROR] Simulation_Results_v2.mat not found.
+    echo Please run a full simulation first.
+    pause
+    exit /b 1
+)
+
+cd /d "%PROJECT_ROOT%"
+matlab -batch "cd('%PROJECT_ROOT%'); addpath(genpath(pwd)); savePath=fullfile(pwd,'main','Imgs'); dataPath=fullfile(pwd,'main','SimulationData'); simFile=fullfile(dataPath,'Simulation_Results_v2.mat'); syncFile=fullfile(dataPath,'Sync_Ablation_Results.mat'); S=load(simFile); if isfield(S,'Perf'), Perf=S.Perf; else, Perf=[]; end; plotESRResults_v2(S.ESR_mean,S.ESR_best,S.ESR_best_algo,S.algoTable,S.SNR_dB,0,true,savePath,false,dataPath,Perf); if isfile(syncFile), A=load(syncFile); plotLatencyAblationResults(A.Ablation,savePath,true,false,dataPath); else, warning('Sync_Ablation_Results.mat not found; skipped A5/A6/A7 redraw.'); end"
+
+if %ERRORLEVEL% neq 0 (
+    echo.
+    echo [ERROR] Figure redraw failed!
+    pause
+    exit /b 1
+)
+
+echo.
+echo [OK] Figure redraw completed
+echo.
+
 :done
 echo.
 echo ============================================================
@@ -380,16 +471,22 @@ echo     - Figures: main\Imgs\
 echo     - Data:    main\SimulationData\
 echo     - Models:  models\
 echo.
-echo   Validation criteria:
-echo     Local-GNN enters distributed main ranking = pipeline updated
-echo     Local-GNN ESR ^> EPA                    = strong local model
-echo     Local-GNN ESR ~= EPA                    = model absent or undertrained
-echo.
-echo   Smoke tests completed:
-echo     - Dataset validation
-echo     - Python full-graph GNN inference
-echo     - Python Local-GNN inference when model exists
-echo     - MATLAB computeRhoGNN and computeRhoLocalGNN bridges
+if %REDRAW_FIGURES_ONLY%==1 (
+    echo   Redraw completed:
+    echo     - ESR figures from Simulation_Results_v2.mat
+    echo     - Sync ablation figures from Sync_Ablation_Results.mat when available
+) else (
+    echo   Validation criteria:
+    echo     Local-GNN enters distributed main ranking = pipeline updated
+    echo     Local-GNN ESR ^> EPA                    = strong local model
+    echo     Local-GNN ESR ~= EPA                    = model absent or undertrained
+    echo.
+    echo   Smoke tests completed:
+    echo     - Dataset validation
+    echo     - Python full-graph GNN inference
+    echo     - Python Local-GNN inference when model exists
+    echo     - MATLAB computeRhoGNN and computeRhoLocalGNN bridges
+)
 echo ============================================================
 echo.
 

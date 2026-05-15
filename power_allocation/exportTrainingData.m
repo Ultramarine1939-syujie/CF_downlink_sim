@@ -17,31 +17,39 @@ function exportTrainingData(outputDir, nSnapshotsPerSNR, useParallel)
 %   2. 噪声扰动: 对 sigma_e 添加 ±20% 随机扰动
 %   3. SNR 覆盖: 10:5:30 dB，共 5 个 SNR 点
 
-addpath(genpath(pwd));
+thisDir = fileparts(mfilename('fullpath'));
+rootDir = fileparts(thisDir);
+addpath(genpath(rootDir));
+params = getDefaultParams();
 
 if nargin < 1 || isempty(outputDir)
-    outputDir = fullfile(pwd, 'data', 'gnn_training');
+    outputDir = fullfile(rootDir, 'data', 'gnn_training');
 end
 if nargin < 2 || isempty(nSnapshotsPerSNR)
-    nSnapshotsPerSNR = 500;
+    nSnapshotsPerSNR = params.training.nSnapshotsPerSNR;
 end
 if nargin < 3
-    useParallel = true;
+    useParallel = params.training.useParallel;
 end
 
-L = 100; N = 1; K = 20;
-tau_c = 200; tau_p = 10;
-ASD_varphi = deg2rad(15);
-ASD_theta  = deg2rad(15);
-p = 100;
-sigma_e = 0.3;
-nIter = 5;
-nbrOfRealizations = 50;
-nbrOfSetups = 2;
-maxIterWMMSE = 30;
-tolWMMSE = 1e-4;
-SNR_dB_range = 10:5:30;
-modes = {'All', 'DCC'};
+L = params.system.L;
+K = params.system.K;
+N = params.system.N;
+tau_c = params.system.tau_c;
+tau_p = params.system.tau_p;
+ASD_varphi = params.channel.ASD_varphi;
+ASD_theta  = params.channel.ASD_theta;
+p = params.power.p;
+sigma_e = params.csi.sigma_e;
+nbrOfRealizations = params.training.nbrOfRealizations;
+nbrOfSetups = params.training.nbrOfSetups;
+maxIterWMMSE = params.wmmse.maxIter;
+tolWMMSE = params.wmmse.tol;
+SNR_dB_range = params.training.SNR_dB;
+modes = params.training.accessModes;
+dropRateMin = params.training.dataAug_dropRate_min;
+dropRateMax = params.training.dataAug_dropRate_max;
+sigmaAugVar = params.training.dataAug_sigma_e_var;
 
 N_snaps = length(SNR_dB_range) * nSnapshotsPerSNR * length(modes);
 
@@ -59,8 +67,9 @@ meta_cell      = cell(N_snaps, 1);
 fprintf('=== GNN 训练数据集生成 (Phase 1) ===\n');
 fprintf('输出目录: %s\n', outputDir);
 fprintf('每个 SNR 快照数: %d\n', nSnapshotsPerSNR);
-fprintf('SNR 范围: 10:5:30 dB\n');
-fprintf('接入模式: All + DCC\n');
+fprintf('SNR 范围: %s dB\n', mat2str(SNR_dB_range));
+fprintf('接入模式: %s\n', strjoin(modes, ' + '));
+fprintf('信道实现数/快照: %d\n', nbrOfRealizations);
 fprintf('预计生成: %d 快照\n', N_snaps);
 
 if ~exist(outputDir, 'dir'); mkdir(outputDir); end
@@ -124,7 +133,8 @@ for si = 1:length(SNR_dB_range)
                  tmpMeta{snap}] = ...
                     generateSingleSnapshot(L, K, N, tau_p, tau_c, ASD_varphi, ASD_theta, p, sigma_e, ...
                                           nbrOfRealizations, nbrOfSetups, maxIterWMMSE, tolWMMSE, ...
-                                          SNR_dB, Pt, mode, si, modeIdx, snap);
+                                          SNR_dB, Pt, mode, si, modeIdx, snap, ...
+                                          dropRateMin, dropRateMax, sigmaAugVar);
             end
         else
             for snap = 1:nSnapshotsPerSNR
@@ -134,7 +144,8 @@ for si = 1:length(SNR_dB_range)
                  tmpMeta{snap}] = ...
                     generateSingleSnapshot(L, K, N, tau_p, tau_c, ASD_varphi, ASD_theta, p, sigma_e, ...
                                           nbrOfRealizations, nbrOfSetups, maxIterWMMSE, tolWMMSE, ...
-                                          SNR_dB, Pt, mode, si, modeIdx, snap);
+                                          SNR_dB, Pt, mode, si, modeIdx, snap, ...
+                                          dropRateMin, dropRateMax, sigmaAugVar);
             end
         end
 
@@ -192,11 +203,13 @@ sysConfig = struct('L', L, 'K', K, 'N', N, 'tau_c', tau_c, 'tau_p', tau_p, ...
                    'ASD_varphi', ASD_varphi, 'ASD_theta', ASD_theta, ...
                    'p', p, 'sigma_e', sigma_e, ...
                    'nbrOfRealizations', nbrOfRealizations, ...
+                   'nbrOfSetups', nbrOfSetups, ...
                    'SNR_dB_range', SNR_dB_range, ...
                    'nSnapshotsPerSNR', nSnapshotsPerSNR, ...
+                   'accessModes', {modes}, ...
                    'useParallel', useParallel);
 
-timestamp = datestr(now, 'yyyymmdd_HHMMSS');
+timestamp = char(datetime('now', 'Format', 'yyyyMMdd_HHmmss'));
 outputFile = fullfile(outputDir, sprintf('gnn_training_data_%s.mat', timestamp));
 fprintf('\n保存至: %s\n', outputFile);
 
@@ -214,8 +227,9 @@ fprintf('  ESR_WMMSE: %s\n', mat2str(size(labels.ESR_WMMSE)));
 
 fprintf('\n快照统计:\n');
 fprintf('  总数: %d\n', N_snaps);
-fprintf('  All:  %d\n', sum(cellfun(@(x) strcmp(x.mode, 'All'), meta)));
-fprintf('  DCC:  %d\n', sum(cellfun(@(x) strcmp(x.mode, 'DCC'), meta)));
+for modeIdx = 1:numel(modes)
+    fprintf('  %s:  %d\n', modes{modeIdx}, sum(cellfun(@(x) strcmp(x.mode, modes{modeIdx}), meta)));
+end
 
 fprintf('\nESR 性能范围:\n');
 fprintf('  WMMSE: %.2f ~ %.2f  (mean=%.2f)\n', min(ESR_WMMSE_all), max(ESR_WMMSE_all), mean(ESR_WMMSE_all));
@@ -236,7 +250,8 @@ function [sqrtGain, D_aug, sigma_e_aug, rho_WMMSE_aug, rho_Dist_aug, rho_EPA_aug
           ESR_W, ESR_D, ESR_E, meta_out] = ...
     generateSingleSnapshot(L, K, N, tau_p, tau_c, ASD_varphi, ASD_theta, p, sigma_e, ...
                           nbrOfRealizations, nbrOfSetups, maxIterWMMSE, tolWMMSE, ...
-                          SNR_dB, Pt, mode, si, modeIdx, snap)
+                          SNR_dB, Pt, mode, si, modeIdx, snap, ...
+                          dropRateMin, dropRateMax, sigmaAugVar)
 seed = si * 100000 + modeIdx * 10000 + snap;
 rng(seed);
 
@@ -256,7 +271,7 @@ else
     D = D_small;
 end
 
-[Hhat, ~, ~, C] = functionChannelEstimates(R, nbrOfRealizations, L, K, N, tau_p, pilotIndex, p);
+[Hhat, ~, ~, ~] = functionChannelEstimates(R, nbrOfRealizations, L, K, N, tau_p, pilotIndex, p);
 H = Hhat + sqrt(sigma_e^2/2) * (randn(size(Hhat)) + 1i*randn(size(Hhat)));
 
 [V_MR, sc_MR] = functionPrecoding_MR(Hhat, nbrOfRealizations, N, K, L);
@@ -273,7 +288,7 @@ ESR_W = sum(SE_WMMSE);
 ESR_D = sum(SE_Dist);
 ESR_E = sum(SE_EPA);
 
-dropRate = 0.1 + 0.2 * rand();
+dropRate = dropRateMin + (dropRateMax - dropRateMin) * rand();
 D_aug = D;
 aug_mask = rand(L, K);
 dropped = (aug_mask < dropRate) & (D_aug == 1);
@@ -286,7 +301,7 @@ rho_Dist_aug(dropped)  = 0;
 rho_EPA_aug   = rho_EPA;
 rho_EPA_aug(dropped)   = 0;
 
-sigma_e_aug = sigma_e * (1 + 0.2 * (rand() - 0.5) * 2);
+sigma_e_aug = sigma_e * (1 + sigmaAugVar * (rand() - 0.5) * 2);
 
 sqrtGain = sqrt(gainOverNoise);
 meta_out = struct('SNR_dB', SNR_dB, 'mode', mode, 'seed', seed, 'snapIdx', snap);

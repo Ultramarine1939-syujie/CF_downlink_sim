@@ -26,8 +26,8 @@ avgComputeMs = mean(Ablation.compute_delay_ms, 2, 'omitnan');
 avgBytes = mean(Ablation.sync_bytes, 2);
 avgRounds = mean(Ablation.sync_rounds, 2);
 
-paOrder = {'LocalGNN', 'GNN', 'DWMMSE', 'WMMSE', 'PSO', 'EPA', 'random', 'baseline'};
-paLabels = {'Local-GNN', 'GNN', 'D-WMMSE', 'WMMSE', 'PSO', 'EPA', 'Random', 'Baseline'};
+paOrder = {'LocalGNN', 'GNN', 'DWMMSE', 'WMMSE', 'EPA', 'random', 'baseline'};
+paLabels = {'Local-GNN', 'GNN', 'D-WMMSE', 'WMMSE', 'EPA', 'Random', 'Baseline'};
 pcOrder = {'MR', 'LMMSE', 'RMMSE', 'LMMSE_G'};
 pcLabels = {'MR', 'L-MMSE', 'R-MMSE', 'L-MMSE-G'};
 paColors = [
@@ -35,12 +35,10 @@ paColors = [
     0.45 0.00 0.75
     0.95 0.55 0.10
     0.85 0.15 0.15
-    0.00 0.45 0.75
     0.00 0.60 0.00
     0.55 0.55 0.55
     0.20 0.20 0.20
 ];
-pcMarkers = {'o', 's', '^', 'd'};
 
 if isSaveFig && ~exist(savePath, 'dir')
     mkdir(savePath);
@@ -158,7 +156,7 @@ b.FaceColor = leftColor;
 b.EdgeColor = [0.10 0.25 0.40];
 ylabel('Sync delay (ms)');
 yyaxis right;
-hLine = plotSmoothCurve(1:numel(paOrder), lineESR, rightColor);
+plotSmoothCurve(1:numel(paOrder), lineESR, rightColor);
 ylabel('Average ESR (bit/s/Hz)');
 set(gca, 'XTick', 1:numel(paOrder), 'XTickLabel', paLabels, 'FontSize', 12);
 ax3 = gca;
@@ -168,6 +166,41 @@ xlabel('Power allocation method');
 title('PA Ablation under R-MMSE Precoding: Delay vs ESR');
 grid on; box on;
 saveFigure(fig3, savePath, isSaveFig, 'FigA7_RMMSE_PA_Latency_Ablation');
+
+%% Fig A8: Fixed L-MMSE, PA ablation
+fig4 = figure('Visible', 'off', 'Position', [100 100 980 520]);
+fixedPC = 'LMMSE';
+barDelay = nan(1, numel(paOrder));
+lineESR = nan(1, numel(paOrder));
+for pi = 1:numel(paOrder)
+    idx = find(strcmp(algoPAs, paOrder{pi}) & strcmp(algoPCs, fixedPC) & strcmp(algoModes, 'DCC'), 1);
+    if isempty(idx)
+        idx = find(strcmp(algoPAs, paOrder{pi}) & strcmp(algoPCs, fixedPC), 1);
+    end
+    if ~isempty(idx)
+        barDelay(pi) = avgSyncMs(idx);
+        lineESR(pi) = avgESR(idx);
+    end
+end
+leftColor = [0.00 0.45 0.74];
+rightColor = [0.85 0.33 0.10];
+set(gca, 'YColor', leftColor);
+yyaxis left;
+b = bar(1:numel(paOrder), barDelay, 0.58);
+b.FaceColor = leftColor;
+b.EdgeColor = [0.10 0.25 0.40];
+ylabel('Sync delay (ms)');
+yyaxis right;
+plotSmoothCurve(1:numel(paOrder), lineESR, rightColor);
+ylabel('Average ESR (bit/s/Hz)');
+set(gca, 'XTick', 1:numel(paOrder), 'XTickLabel', paLabels, 'FontSize', 12);
+ax4 = gca;
+ax4.YAxis(1).Color = leftColor;
+ax4.YAxis(2).Color = rightColor;
+xlabel('Power allocation method');
+title('PA Ablation under L-MMSE Precoding: Delay vs ESR');
+grid on; box on;
+saveFigure(fig4, savePath, isSaveFig, 'FigA8_LMMSE_PA_Latency_Ablation');
 
 %% Save data table
 if isSaveData
@@ -183,24 +216,7 @@ if isSaveData
         fullfile(dataPath, 'Sync_Ablation_Table.csv'));
 end
 
-fprintf('[INFO] 3 synchronization ablation figures generated successfully.\n');
-end
-
-function label = shortAlgoName(algo)
-label = sprintf('%s+%s', displayPA(algo.pa), displayPC(algo.pc));
-end
-
-function label = displayPA(paKey)
-switch paKey
-    case 'LocalGNN'
-        label = 'Local-GNN';
-    case 'baseline'
-        label = 'Baseline';
-    case 'random'
-        label = 'Random';
-    otherwise
-        label = paKey;
-end
+fprintf('[INFO] 4 synchronization ablation figures generated successfully.\n');
 end
 
 function label = displayPC(pcKey)

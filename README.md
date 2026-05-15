@@ -255,6 +255,12 @@ CF_downlink_sim/
 
 > ⚠️ **重要**：如果缺少这些文件，对应 GNN 算法会自动回退到 EPA（等功率分配），不影响其他算法运行。
 
+`run_test.bat` 在训练 AP-local GNN 前会自动检测
+`models/best_local_gnn_power.pt`。如果旧模型已存在，脚本会询问是否重新训练并替换；选择否时会复用旧模型继续后续推理测试和仿真。
+
+若完整仿真已经跑完，只想根据已有 `Simulation_Results_v2.mat` 和
+`Sync_Ablation_Results.mat` 重新绘图，可执行 `run_test.bat 6 /y`。
+
 #### 5.2 启动仿真
 
 **方式 A：MATLAB GUI（推荐新手）**
@@ -299,45 +305,33 @@ matlab -batch "cd('C:\Users\Admin\Documents\个人资料\CF_downlink_sim'); run"
 
 ### 修改仿真参数
 
-所有仿真参数都在 [main/Combined_Downlink_Sim.m](main/Combined_Downlink_Sim.m) 文件开头的**用户配置区**（约第 8-38 行）：
+所有实验参数统一在 [config/getDefaultParams.m](config/getDefaultParams.m) 中配置。主仿真和训练数据导出都会读取该文件，因此修改实验条件时优先只改这一处。
 
 ```matlab
-%% ================= 用户配置区 =================
-% ---------- 系统参数 ----------
-L = 100;              % AP 数量
-N = 1;                % 每 AP 天线数
-K = 20;               % UE 数量
-tau_c = 200;          % 相干块长度
-tau_p = 10;           % 导频长度
-SNR_dB = 10:5:30;     % SNR 扫描范围 [dB]
-
-% ---------- CSI误差参数 ----------
-sigma_e = 0.3;        % 信道估计误差标准差
-nIter = 5;            % Robust MMSE 迭代次数
-
-% ---------- 仿真规模 ----------
-numScenarios = 2;             % 场景数
-nbrOfRealizations = 50;       % 每场景信道实现数
-
-% ---------- 缓存 & 阶段控制 (v3.0) ----------
-runStage = 3;       % 1=仅传统方法, 2=仅GNN, 3=全部(默认)
-useCache = true;    % 是否启用缓存
+params.system.L = 100;                     % AP 数量
+params.system.K = 20;                      % UE 数量
+params.power.SNR_dB = 10:5:30;             % 主仿真 SNR 扫描范围
+params.csi.sigma_e = 0.3;                  % CSI 误差强度
+params.simulation.numScenarios = 10;       % 场景数
+params.simulation.nbrOfRealizations = 200; % 每场景信道实现数
+params.runtime.runStage = 3;               % 1=传统/参考, 2=仅GNN, 3=全部
+params.runtime.useCache = true;            % 是否启用缓存
+params.training.nSnapshotsPerSNR = 500;    % 每个 SNR/模式的训练快照数
 ```
 
 **常用参数调整建议**：
 
 | 目标 | 参数调整 | 说明 |
 |------|---------|------|
-| 快速验证 | `nbrOfRealizations=20`, `numScenarios=1` | 减少计算量 |
-| 更高精度 | `nbrOfRealizations=200`, `numScenarios=5` | 结果更稳定 |
-| 更宽 SNR 范围 | `SNR_dB=-10:2:30` | 更细粒度 |
-| 仅跑传统算法 | `runStage=1` | 跳过 GNN 部分 |
-| 仅重跑 GNN | `runStage=2` | 传统方法从缓存加载 |
-| 关闭同步时延消融 | `enableSyncAblation=false` | 不生成 FigA5-FigA7 |
+| 快速验证 | `params.simulation.nbrOfRealizations=20`, `params.simulation.numScenarios=1` | 减少计算量 |
+| 更高精度 | `params.simulation.nbrOfRealizations=200`, `params.simulation.numScenarios=10` | 结果更稳定 |
+| 更宽 SNR 范围 | `params.power.SNR_dB=-10:2:30` | 更细粒度 |
+| 仅跑传统算法 | `params.runtime.runStage=1` | 跳过 GNN 部分 |
+| 仅重跑 GNN | `params.runtime.runStage=2` | 传统方法从缓存加载 |
+| 关闭同步时延消融 | `params.syncAblation.enable=false` | 不生成 FigA5-FigA7 |
 
-同步时延模型可通过 `syncAblation` 配置块调节，关键参数包括
-`fronthaulMbps`、`syncRttMs`、`dccPayloadRatio`、`wmmseRounds` 和
-`psoRounds`。
+同步时延模型可通过 `params.syncAblation` 配置块调节，关键参数包括
+`fronthaulMbps`、`syncRttMs`、`dccPayloadRatio` 和 `includeComputeTime`。
 
 ### v3.0 缓存机制详解
 
@@ -374,7 +368,7 @@ main/SimulationData/
 | 修改 SNR_dB 范围 | **对应 SNR 点失效**，其他保留 |
 | 替换 .pt 模型文件 | **仅 GNN 缓存失效**，传统方法复用 |
 | 手动删除 cache_*.mat | **强制全部重算** |
-| 设置 `useCache=false` | **禁用缓存**，等同 v2.0 |
+| 设置 `params.runtime.useCache=false` | **禁用缓存**，等同 v2.0 |
 
 #### 典型使用场景
 
@@ -382,7 +376,7 @@ main/SimulationData/
 |------|------|------|
 | 首次运行 | 直接运行 | ~30分钟（取决于配置） |
 | 参数不变重跑 | 直接运行 | **<10秒**（纯读缓存） |
-| 换了新 GNN 模型 | 替换 .pt 文件，设置 `runStage=2` | ~2分钟（仅 GNN） |
+| 换了新 GNN 模型 | 替换 .pt 文件，设置 `params.runtime.runStage=2` | ~2分钟（仅 GNN） |
 | 调了 sigma_e | 修改参数，直接运行 | ~30分钟（自动检测变更） |
 | 强制全重算 | 删除 `SimulationData/cache_*.mat` | ~30分钟 |
 
@@ -390,7 +384,7 @@ main/SimulationData/
 
 ## 🔬 算法组合说明
 
-仿真系统自动遍历 **64 种算法组合**（8 PA × 4 PC × 2 Mode）：
+仿真系统自动遍历 **56 种算法组合**（7 PA × 4 PC × 2 Mode）：
 
 ### 功率分配方法 (PA)
 
@@ -401,11 +395,10 @@ main/SimulationData/
 | **D-WMMSE** | 分布式 | O(固定轮次×LK) | 固定消息交换轮次的分布式 WMMSE 近似 |
 | **Local-GNN** | 分布式智能 | O(L×前向传播) | 每个 AP 仅用本地 AP-UE 行独立推理 |
 | **WMMSE** | 传统 | O(迭代×LK²) | 加权最小均方误差（最慢但最优） |
-| **PSO** | 传统 | O(粒子数×迭代) | 粒子群优化 |
 | **Random** | 传统 | O(LK) | 随机分配基线 |
 | **GNN** | 智能参考 | O(前向传播) | 全图 GAT-GNN 低时延参考 |
 
-主排名只统计 PC 和 PA 均满足分布式信息约束的组合。Local-GNN、D-WMMSE、EPA、Baseline、Random 可作为分布式 PA 候选；WMMSE、PSO、L-MMSE-G 和当前全图 GNN 保留为集中式/离线参考。
+主排名只统计 PC 和 PA 均满足分布式信息约束的组合。Local-GNN、D-WMMSE、EPA、Baseline、Random 可作为分布式 PA 候选；WMMSE、L-MMSE-G 和当前全图 GNN 保留为集中式参考。
 
 ### 预编码方法 (PC)
 
@@ -433,7 +426,6 @@ main/SimulationData/
 |------|---------|---------|---------|---------|
 | WMMSE | ⭐⭐⭐⭐⭐ | 高 | O(LK) CSI | 集中式基准 |
 | GNN | ⭐⭐⭐⭐ | **极低** | **零** | 本地实时 |
-| PSO | ⭐⭐⭐ | 中 | 低 | 离线优化 |
 | EPA | ⭐⭐ | 极低 | 零 | 简单基线 |
 | Baseline | ⭐⭐ | 极低 | 零 | 距离基线 |
 
@@ -492,10 +484,10 @@ py.importlib.import_module('torch')
 #### Q3: WMMSE 计算非常慢？
 
 **优化建议**：
-1. **启用缓存**：确保 `useCache = true`（默认开启）
-2. **减少实现数**：临时设 `nbrOfRealizations = 20` 做快速测试
-3. **减少 SNR 点**：改为 `SNR_dB = [10, 20, 30]`
-4. **分阶段运行**：先用 `runStage=1` 跑传统方法，再用 `runStage=2` 跑 GNN
+1. **启用缓存**：确保 `params.runtime.useCache = true`（默认开启）
+2. **减少实现数**：临时设 `params.simulation.nbrOfRealizations = 20`
+3. **减少 SNR 点**：改为 `params.power.SNR_dB = [10, 20, 30]`
+4. **分阶段运行**：先用 `params.runtime.runStage=1` 跑传统方法，再用 `params.runtime.runStage=2` 跑 GNN
 
 #### Q4: 如何清除缓存强制重算？
 
@@ -506,8 +498,8 @@ del CF_downlink_sim\main\SimulationData\cache_*.mat
 
 **方法 B**：关闭缓存
 ```matlab
-% 在 Combined_Downlink_Sim.m 中修改
-useCache = false;
+% 在 config/getDefaultParams.m 中修改
+params.runtime.useCache = false;
 ```
 
 #### Q5: 更换了 GNN 模型后需要全部重跑吗？
@@ -515,7 +507,7 @@ useCache = false;
 **不需要！** 这是 v3.0 缓存的核心优势：
 
 1. 将新 `.pt` 文件放到 `models/` 目录
-2. 设置 `runStage = 2`
+2. 设置 `params.runtime.runStage = 2`
 3. 运行仿真
 4. 系统会**自动检测模型变更**，仅重跑 GNN 推理，传统方法从缓存加载
 
@@ -538,9 +530,9 @@ exportTrainingData()
 #### Q7: 内存不足 (Out of Memory)？
 
 **解决方案**：
-1. 减小系统规模：`L=50, K=10`
-2. 减少实现数：`nbrOfRealizations = 20`
-3. 减少场景数：`numScenarios = 1`
+1. 减小系统规模：`params.system.L=50, params.system.K=10`，并重新训练模型
+2. 减少实现数：`params.simulation.nbrOfRealizations = 20`
+3. 减少场景数：`params.simulation.numScenarios = 1`
 4. 关闭不必要的 MATLAB 窗口/变量
 
 #### Q8: CUDA/GPU 相关错误？
@@ -591,8 +583,6 @@ CF_downlink_sim/
 │   ├── computeRhoWMMSE.m             # WMMSE（迭代优化）
 │   ├── computeRhoGNN.m               # GNN 推理接口
 │   ├── computeRhoLocalGNN.m          # AP-local GNN 分布式推理接口
-│   ├── computeRho_all_dcc_pso.m      # DCC+PSO 组合
-│   ├── functionOptimize_d_PSO.m      # PSO 优化器
 │   └── exportTrainingData.m           # 训练数据导出器
 │
 ├── se_calculation/                    # 📈 频谱效率计算

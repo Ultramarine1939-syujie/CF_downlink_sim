@@ -10,19 +10,18 @@ algoPAs = {algoTable.pa};
 algoPCs = {algoTable.pc};
 algoModes = {algoTable.mode};
 
-paOrder = {'LocalGNN', 'GNN', 'DWMMSE', 'WMMSE', 'PSO', 'EPA', 'random', 'baseline'};
-paLabels = {'Local-GNN', 'GNN', 'D-WMMSE', 'WMMSE', 'PSO', 'EPA', 'Random', 'Baseline'};
+paOrder = {'LocalGNN', 'GNN', 'DWMMSE', 'WMMSE', 'EPA', 'random', 'baseline'};
+paLabels = {'Local-GNN', 'GNN', 'D-WMMSE', 'WMMSE', 'EPA', 'Random', 'Baseline'};
 paColors = [
     0.00 0.52 0.58
     0.45 0.00 0.75
     0.95 0.55 0.10
     0.85 0.15 0.15
-    0.00 0.45 0.75
     0.00 0.60 0.00
     0.55 0.55 0.55
     0.20 0.20 0.20
 ];
-paMarkers = {'x', 'o', 'h', 's', '^', 'd', 'v', 'p'};
+paMarkers = {'x', 'o', 'h', 's', 'd', 'v', 'p'};
 
 FS_AXIS = 12;
 FS_TITLE = 13;
@@ -82,30 +81,54 @@ legend(legendLabels, 'Location', 'SouthEast', 'FontSize', FS_LEG);
 grid on; box on; set(gca, 'FontSize', FS_AXIS);
 saveFigure(fig2, savePath, isSaveFig, 'Fig2_RMMSE_PA_Comparison');
 
-%% Fig 3: GNN gap to WMMSE under the same PC/mode
+%% Fig 3: GNN-family gap to WMMSE under the same PC/mode
 fig3 = figure('Visible', 'off', 'Position', [100 100 900 560]);
-gnnIdx = findExact(algoTable, 'GNN', fixedPC, 'DCC');
 wmmseIdx = findExact(algoTable, 'WMMSE', fixedPC, 'DCC');
-if isempty(gnnIdx) || isempty(wmmseIdx)
-    text(0.5, 0.5, 'GNN/WMMSE R-MMSE DCC results unavailable', ...
+gnnFamily = {'LocalGNN', 'GNN'};
+gnnFamilyLabels = {'Local-GNN', 'GNN'};
+gnnFamilyColors = [paColors(1, :); paColors(2, :)];
+gapPctMat = [];
+gapLabels = {};
+gapColors = [];
+if isempty(wmmseIdx)
+    text(0.5, 0.5, 'WMMSE R-MMSE DCC reference unavailable', ...
         'Units', 'normalized', 'HorizontalAlignment', 'center', 'FontSize', FS_AXIS);
 else
-    gapPct = (ESR_mean(gnnIdx, :) - ESR_mean(wmmseIdx, :)) ./ max(ESR_mean(wmmseIdx, :), eps) * 100;
-    b = bar(SNR_dB, gapPct, 0.58);
-    b.FaceColor = 'flat';
-    b.CData = repmat(paColors(2, :), num_snr, 1);
-    neg = gapPct < 0;
-    b.CData(neg, :) = repmat([0.85 0.15 0.15], sum(neg), 1);
+    for gi = 1:numel(gnnFamily)
+        curIdx = findExact(algoTable, gnnFamily{gi}, fixedPC, 'DCC');
+        if isempty(curIdx); continue; end
+        gapPctMat(:, end+1) = ((ESR_mean(curIdx, :) - ESR_mean(wmmseIdx, :)) ./ ...
+            max(ESR_mean(wmmseIdx, :), eps) * 100).'; %#ok<AGROW>
+        gapLabels{end+1} = gnnFamilyLabels{gi}; %#ok<AGROW>
+        gapColors(end+1, :) = gnnFamilyColors(gi, :); %#ok<AGROW>
+    end
+
+    if isempty(gapPctMat)
+        text(0.5, 0.5, 'GNN-family R-MMSE DCC results unavailable', ...
+            'Units', 'normalized', 'HorizontalAlignment', 'center', 'FontSize', FS_AXIS);
+    else
+        b = bar(SNR_dB, gapPctMat, 0.68, 'grouped');
+        for gi = 1:numel(b)
+            b(gi).FaceColor = gapColors(gi, :);
+            b(gi).EdgeColor = [0.15 0.15 0.15];
+        end
+    end
     hold on; yline(0, 'k--', 'LineWidth', 1);
-    for si = 1:num_snr
-        if gapPct(si) >= 0; va = 'bottom'; else; va = 'top'; end
-        text(SNR_dB(si), gapPct(si), sprintf('%+.1f%%', gapPct(si)), ...
-            'HorizontalAlignment', 'center', 'VerticalAlignment', va, ...
-            'FontSize', 9, 'FontWeight', 'bold');
+    if ~isempty(gapPctMat)
+        for gi = 1:size(gapPctMat, 2)
+            xEnd = b(gi).XEndPoints;
+            for si = 1:num_snr
+                if gapPctMat(si, gi) >= 0; va = 'bottom'; else; va = 'top'; end
+                text(xEnd(si), gapPctMat(si, gi), sprintf('%+.1f%%', gapPctMat(si, gi)), ...
+                    'HorizontalAlignment', 'center', 'VerticalAlignment', va, ...
+                    'FontSize', 8, 'FontWeight', 'bold');
+            end
+        end
+        legend(gapLabels, 'Location', 'best', 'FontSize', FS_LEG);
     end
     xlabel('SNR (dB)', 'FontSize', FS_AXIS);
     ylabel('ESR Gap to WMMSE (%)', 'FontSize', FS_AXIS);
-    title('GNN Gap to WMMSE (R-MMSE, DCC)', 'FontSize', FS_TITLE);
+    title('GNN-family Gap to WMMSE (R-MMSE, DCC)', 'FontSize', FS_TITLE);
     grid on; box on; set(gca, 'FontSize', FS_AXIS);
 end
 saveFigure(fig3, savePath, isSaveFig, 'Fig3_GNN_WMMSE_Gap');
@@ -129,7 +152,7 @@ if isempty(wmmseBestIdx); wmmseBestIdx = getBestCurve(ESR_mean, algoTable, 'WMMS
 wmmseAvg = mean(ESR_mean(wmmseBestIdx, :));
 
 notes = containers.Map(paOrder, {'AP-local learned split', 'full-graph learned split', ...
-    'fixed-round distributed update', 'iterative reference', 'heuristic optimizer', 'equal power', ...
+    'fixed-round distributed update', 'iterative reference', 'equal power', ...
     'random baseline', 'large-scale baseline'});
 
 for pi = 1:numel(paOrder)
@@ -152,7 +175,7 @@ end
 title('Current Method Summary', 'FontSize', FS_TITLE);
 saveFigure(fig4, savePath, isSaveFig, 'Fig4_Method_Summary');
 
-%% Fig 5: WMMSE vs GNN timing, split by end-to-end and core compute
+%% Fig 5: WMMSE vs GNN-family timing, split by end-to-end and core compute
 fig5 = figure('Visible', 'off', 'Position', [100 100 1120 720]);
 if nargin < 11 || isempty(Perf) || ~isfield(Perf, 'time_pa_sec') || ~isfield(Perf, 'methodNames')
     text(0.5, 0.5, 'Timing data unavailable', ...
@@ -160,38 +183,58 @@ if nargin < 11 || isempty(Perf) || ~isfield(Perf, 'time_pa_sec') || ~isfield(Per
 else
     wIdx = find(strcmp(Perf.methodNames, 'WMMSE'), 1);
     gIdx = find(strcmp(Perf.methodNames, 'GNN'), 1);
-    if isempty(wIdx) || isempty(gIdx)
-        text(0.5, 0.5, 'WMMSE/GNN timing rows unavailable', ...
+    lIdx = find(strcmp(Perf.methodNames, 'Local-GNN'), 1);
+    if isempty(wIdx) || (isempty(gIdx) && isempty(lIdx))
+        text(0.5, 0.5, 'WMMSE/GNN-family timing rows unavailable', ...
             'Units', 'normalized', 'HorizontalAlignment', 'center', 'FontSize', FS_AXIS);
     else
-        wmmseE2E = max(squeeze(mean(Perf.time_pa_sec(wIdx, :, :), 3)), eps);
-        gnnE2E = max(squeeze(mean(Perf.time_pa_sec(gIdx, :, :), 3)), eps);
-        wmmseE2E = wmmseE2E(:).';
-        gnnE2E = gnnE2E(:).';
+        wmmseE2E = getPerfCurve(Perf.time_pa_sec, wIdx);
+        methodIdx = [];
+        methodLabels = {};
+        methodColors = [];
+        if ~isempty(lIdx)
+            methodIdx(end+1) = lIdx; %#ok<AGROW>
+            methodLabels{end+1} = 'Local-GNN'; %#ok<AGROW>
+            methodColors(end+1, :) = paColors(1, :); %#ok<AGROW>
+        end
+        if ~isempty(gIdx)
+            methodIdx(end+1) = gIdx; %#ok<AGROW>
+            methodLabels{end+1} = 'GNN'; %#ok<AGROW>
+            methodColors(end+1, :) = paColors(2, :); %#ok<AGROW>
+        end
+
+        e2eMat = zeros(numel(methodIdx), num_snr);
+        for mi = 1:numel(methodIdx)
+            e2eMat(mi, :) = getPerfCurve(Perf.time_pa_sec, methodIdx(mi));
+        end
 
         if isfield(Perf, 'time_core_sec')
-            wmmseCore = max(squeeze(mean(Perf.time_core_sec(wIdx, :, :), 3)), eps);
-            gnnCore = max(squeeze(mean(Perf.time_core_sec(gIdx, :, :), 3)), eps);
+            wmmseCore = getPerfCurve(Perf.time_core_sec, wIdx);
+            coreMat = zeros(numel(methodIdx), num_snr);
+            for mi = 1:numel(methodIdx)
+                coreMat(mi, :) = getPerfCurve(Perf.time_core_sec, methodIdx(mi));
+            end
         else
             wmmseCore = wmmseE2E;
-            gnnCore = gnnE2E;
+            coreMat = e2eMat;
         end
-        wmmseCore = wmmseCore(:).';
-        gnnCore = gnnCore(:).';
 
         tiledlayout(2, 2, 'TileSpacing', 'compact', 'Padding', 'compact');
-        plotTimePair(SNR_dB, wmmseE2E, gnnE2E, paColors, FS_AXIS, FS_TITLE, FS_LEG, ...
+        plotTimeComparison(SNR_dB, wmmseE2E, e2eMat, methodLabels, methodColors, paColors(4, :), ...
+            FS_AXIS, FS_TITLE, FS_LEG, ...
             'End-to-End PA Time', 'Includes MATLAB-Python Bridge');
-        plotSpeedup(SNR_dB, wmmseE2E ./ gnnE2E, paColors, num_snr, FS_AXIS, FS_TITLE, ...
+        plotSpeedupComparison(SNR_dB, wmmseE2E ./ e2eMat, methodLabels, methodColors, ...
+            FS_AXIS, FS_TITLE, FS_LEG, ...
             'End-to-End Speedup');
-        plotTimePair(SNR_dB, wmmseCore, gnnCore, paColors, FS_AXIS, FS_TITLE, FS_LEG, ...
+        plotTimeComparison(SNR_dB, wmmseCore, coreMat, methodLabels, methodColors, paColors(4, :), ...
+            FS_AXIS, FS_TITLE, FS_LEG, ...
             'Core Compute Time', 'WMMSE loop vs GNN forward');
-        plotSpeedup(SNR_dB, wmmseCore ./ gnnCore, paColors, num_snr, FS_AXIS, FS_TITLE, ...
+        plotSpeedupComparison(SNR_dB, wmmseCore ./ coreMat, methodLabels, methodColors, ...
+            FS_AXIS, FS_TITLE, FS_LEG, ...
             'Core Compute Speedup');
 
-        sgtitle(sprintf('WMMSE vs GNN Timing: E2E %.3f/%.3f ms, Core %.3f/%.3f ms', ...
-            mean(wmmseE2E) * 1000, mean(gnnE2E) * 1000, ...
-            mean(wmmseCore) * 1000, mean(gnnCore) * 1000), 'FontSize', FS_TITLE);
+        sgtitle(sprintf('WMMSE vs GNN-family Timing: WMMSE E2E %.3f ms, Core %.3f ms', ...
+            mean(wmmseE2E) * 1000, mean(wmmseCore) * 1000), 'FontSize', FS_TITLE);
     end
 end
 saveFigure(fig5, savePath, isSaveFig, 'Fig5_Time_Overhead_Comparison');
@@ -239,37 +282,50 @@ switch pcKey
 end
 end
 
-function plotTimePair(SNR_dB, wmmseTime, gnnTime, paColors, FS_AXIS, FS_TITLE, FS_LEG, titleText, subText)
+function curve = getPerfCurve(perfArray, methodIdx)
+curve = max(squeeze(mean(perfArray(methodIdx, :, :), 3)), eps);
+curve = curve(:).';
+end
+
+function plotTimeComparison(SNR_dB, wmmseTime, methodTimes, methodLabels, methodColors, wmmseColor, ...
+    FS_AXIS, FS_TITLE, FS_LEG, titleText, subText)
 nexttile;
 semilogy(SNR_dB, wmmseTime * 1000, '-s', ...
-    'Color', paColors(4, :), 'LineWidth', 2.2, 'MarkerSize', 7);
+    'Color', wmmseColor, 'LineWidth', 2.2, 'MarkerSize', 7);
 hold on;
-semilogy(SNR_dB, gnnTime * 1000, '-o', ...
-    'Color', paColors(2, :), 'LineWidth', 2.8, 'MarkerSize', 7);
+for mi = 1:size(methodTimes, 1)
+    semilogy(SNR_dB, methodTimes(mi, :) * 1000, '-o', ...
+        'Color', methodColors(mi, :), 'LineWidth', 2.6, 'MarkerSize', 7);
+end
 xlabel('SNR (dB)', 'FontSize', FS_AXIS);
 ylabel('Time (ms)', 'FontSize', FS_AXIS);
 title({titleText, subText}, 'FontSize', FS_TITLE);
-legend({'WMMSE', 'GNN'}, 'Location', 'best', 'FontSize', FS_LEG);
+legend([{'WMMSE'}, methodLabels], 'Location', 'best', 'FontSize', FS_LEG);
 grid on; box on; set(gca, 'FontSize', FS_AXIS);
 end
 
-function plotSpeedup(SNR_dB, speedup, paColors, num_snr, FS_AXIS, FS_TITLE, titleText)
+function plotSpeedupComparison(SNR_dB, speedupMat, methodLabels, methodColors, ...
+    FS_AXIS, FS_TITLE, FS_LEG, titleText)
 nexttile;
-b = bar(SNR_dB, speedup, 0.58);
-b.FaceColor = 'flat';
-b.CData = repmat(paColors(2, :), num_snr, 1);
-slower = speedup < 1;
-b.CData(slower, :) = repmat([0.85 0.15 0.15], sum(slower), 1);
+b = bar(SNR_dB, speedupMat.', 0.68, 'grouped');
+for mi = 1:numel(b)
+    b(mi).FaceColor = methodColors(mi, :);
+    b(mi).EdgeColor = [0.15 0.15 0.15];
+end
 hold on; yline(1, 'k--', 'LineWidth', 1);
-for si = 1:num_snr
-    if speedup(si) >= 1; va = 'bottom'; else; va = 'top'; end
-    text(SNR_dB(si), speedup(si), sprintf('%.2fx', speedup(si)), ...
-        'HorizontalAlignment', 'center', 'VerticalAlignment', va, ...
-        'FontSize', 9, 'FontWeight', 'bold');
+for mi = 1:size(speedupMat, 1)
+    xEnd = b(mi).XEndPoints;
+    for si = 1:numel(SNR_dB)
+        if speedupMat(mi, si) >= 1; va = 'bottom'; else; va = 'top'; end
+        text(xEnd(si), speedupMat(mi, si), sprintf('%.2fx', speedupMat(mi, si)), ...
+            'HorizontalAlignment', 'center', 'VerticalAlignment', va, ...
+            'FontSize', 8, 'FontWeight', 'bold');
+    end
 end
 xlabel('SNR (dB)', 'FontSize', FS_AXIS);
-ylabel('WMMSE / GNN Time', 'FontSize', FS_AXIS);
+ylabel('WMMSE / method time', 'FontSize', FS_AXIS);
 title(titleText, 'FontSize', FS_TITLE);
+legend(methodLabels, 'Location', 'best', 'FontSize', FS_LEG);
 grid on; box on; set(gca, 'FontSize', FS_AXIS);
 end
 

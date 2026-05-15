@@ -6,57 +6,57 @@
 
 close all; clear;
 
-%% ================= 用户配置区 =================
+%% ================= 统一参数入口 =================
+% 所有实验条件优先在 config/getDefaultParams.m 中修改。
+scriptDir = fileparts(mfilename('fullpath'));
+rootDir = fileparts(scriptDir);
+addpath(genpath(rootDir));
+params = getDefaultParams();
+
 % ---------- 系统参数 ----------
-L = 100; N = 1; K = 20;
-tau_c = 200; tau_p = 10;
-ASD_varphi = deg2rad(15);
-ASD_theta  = deg2rad(15);
-p = 100;                          % 导频功率
-SNR_dB = 10:5:30;                 % SNR 扫描范围
+L = params.system.L;
+K = params.system.K;
+N = params.system.N;
+tau_c = params.system.tau_c;
+tau_p = params.system.tau_p;
+ASD_varphi = params.channel.ASD_varphi;
+ASD_theta  = params.channel.ASD_theta;
+p = params.power.p;
+SNR_dB = params.power.SNR_dB;
 num_snr = length(SNR_dB);
 
 % ---------- CSI误差参数 ----------
-sigma_e = 0.3;                    % 信道估计误差标准差
-nIter = 5;                        % Robust MMSE 迭代次数
+sigma_e = params.csi.sigma_e;
+nIter = params.csi.nIter;
 
 % ---------- 仿真规模 ----------
-numScenarios = 2;                 % 场景数
-nbrOfRealizations = 50;         % 每个场景的信道实现数
+numScenarios = params.simulation.numScenarios;
+nbrOfRealizations = params.simulation.nbrOfRealizations;
 
 % ---------- 输出控制 ----------
-isSaveFig = true;                 % 是否保存图像
-isSaveData = true;               % 是否保存数据
+isSaveFig = params.output.isSaveFig;
+isSaveData = params.output.isSaveData;
 
 % ---------- 显示模式 ----------
-VERBOSE = true;                   % 详细输出(算法名称+ESR)
-VERBOSE_ALGO = false;             % 逐算法 ESR 详情输出
+VERBOSE = params.runtime.verbose;
+VERBOSE_ALGO = params.runtime.verboseAlgo;
 
 % ---------- 缓存 & 阶段控制 (v3.0 新增) ----------
-runStage = 3;     % 1=仅传统方法(Baseline/EPA/PSO/WMMSE/Random)
-                   % 2=仅GNN推理(需已有stage1缓存)
-                   % 3=全部(默认, 等价原版行为)
-useCache = true;   % 缓存总开关; false 则每次全部重算(等同v2.0)
+runStage = params.runtime.runStage; % 1=传统/参考方法, 2=仅GNN推理, 3=全部
+useCache = params.runtime.useCache;
 
 % ---------- 预编码 x 功率分配同步时延消融 ----------
-enableSyncAblation = true;         % 输出 PA/PC 组合对同步时延的消融分析
-syncAblation = struct();
-syncAblation.fronthaulMbps = 1000; % 控制/前传链路速率, 用于 bytes -> ms
-syncAblation.syncRttMs = 0.05;     % 单轮 AP/CPU 同步控制往返时延
-syncAblation.dccPayloadRatio = 0.35; % DCC 相对 All 的同步载荷比例近似
-syncAblation.dwmmseRounds = 5;     % 分布式 WMMSE 固定消息交换轮次
-syncAblation.wmmseRounds = 20;     % WMMSE 功率更新同步轮次
-syncAblation.psoRounds = 50;       % PSO 粒子全局最优同步轮次
-syncAblation.includeComputeTime = true; % 同时导出已有 PA 计算时间
+enableSyncAblation = params.syncAblation.enable;
+syncAblation = params.syncAblation;
+syncAblation.dwmmseRounds = params.dwmmse.rounds;
+syncAblation.wmmseRounds = params.wmmse.simMaxIter;
 
 %% ================= 路径配置 =================
-scriptDir = fileparts(mfilename('fullpath'));
 cd(scriptDir);
-rootDir = fileparts(scriptDir);
-savePath = fullfile(scriptDir, 'Imgs');
-dataPath = fullfile(scriptDir, 'SimulationData');
-gnnLocalModelPath = fullfile(rootDir, 'models', 'best_gat_gnn_power.pt');
-localGnnModelPath = fullfile(rootDir, 'models', 'best_local_gnn_power.pt');
+savePath = fullfile(scriptDir, params.output.savePath);
+dataPath = fullfile(scriptDir, params.output.dataPath);
+gnnLocalModelPath = fullfile(rootDir, params.gnn.fullModelFile);
+localGnnModelPath = fullfile(rootDir, params.gnn.localModelFile);
 
 % 消融实验模型路径
 gnnAblationDir = fullfile(rootDir, 'models', 'ablation');
@@ -70,7 +70,7 @@ allModelNames = {'gnnLocalModelPath', 'localGnnModelPath', 'gnnMLPModelPath', 'g
 if ~exist(savePath, 'dir'); mkdir(savePath); end
 if ~exist(dataPath, 'dir'); mkdir(dataPath); end
 
-if isSaveFig && exist(savePath, 'dir')
+if isSaveFig && params.output.cleanOldFigures && exist(savePath, 'dir')
     fprintf('>>> Cleaning old figures...\n');
     rmdir(savePath, 's'); mkdir(savePath);
 end
@@ -86,7 +86,6 @@ PA.random.name   = 'Random';         PA.random.fcn   = [];                      
 PA.EPA.name      = 'EPA';            PA.EPA.fcn      = @computeRhoEPA;               PA.EPA.arch      = 'distributed';
 PA.DWMMSE.name   = 'D-WMMSE';        PA.DWMMSE.fcn   = @computeRhoDistributedWMMSE;  PA.DWMMSE.arch   = 'distributed';
 PA.WMMSE.name    = 'WMMSE';          PA.WMMSE.fcn    = @computeRhoWMMSE;             PA.WMMSE.arch    = 'centralized_reference';
-PA.PSO.name      = 'PSO';            PA.PSO.fcn      = [];                           PA.PSO.arch      = 'offline_reference';
 PA.GNN.name      = 'GNN';            PA.GNN.fcn      = @computeRhoGNN;               PA.GNN.arch      = 'low_latency_centralized';
 PA.LocalGNN.name = 'Local-GNN';      PA.LocalGNN.fcn = @computeRhoLocalGNN;          PA.LocalGNN.arch = 'distributed';
 
@@ -105,12 +104,12 @@ SE.RMMSE.fcn = @functionComputeSE_downlink_RobustMMSE;
 SE.LMMSE_G.fcn = @functionComputeSE_downlink_LMMSE;
 
 % 接入模式
-AP_MODE = {'All', 'DCC'};
+AP_MODE = params.simulation.accessModes;
 
 % Stage 划分: 传统/参考方法索引 vs GNN 索引
 paList = fieldnames(PA);
 pcList = fieldnames(PC);
-numPA_trad = 6;   % baseline, random, EPA, D-WMMSE, WMMSE, PSO
+numPA_trad = 5;   % baseline, random, EPA, D-WMMSE, WMMSE
 numPA_gnn  = numel(paList) - numPA_trad;  % GNN / Local-GNN family
 numPC = length(pcList);  % 4
 numMode = length(AP_MODE);       % 2
@@ -185,8 +184,6 @@ end
 ESR_acc = zeros(numAlgos, num_snr);
 ESR_best = -inf(1, num_snr);
 ESR_best_algo = strings(1, num_snr);
-PSO_info = struct('iterUsed',[], 'bestFitness',[], 'd_opt',[]);
-
 Perf = struct();
 Perf.methodNames = {'Baseline', 'D-WMMSE', 'WMMSE', 'GNN', 'Local-GNN'};
 Perf.modeNames = AP_MODE;
@@ -212,7 +209,7 @@ scenarioFP = buildParamFingerprint(L, K, N, tau_p, tau_c, ASD_varphi, ASD_theta,
     nbrOfRealizations, sigma_e, p, nIter, NaN);
 snrFPs = buildSNRFingerprints(L, K, N, tau_p, tau_c, ASD_varphi, ASD_theta, ...
     nbrOfRealizations, sigma_e, p, nIter, SNR_dB);
-snrCacheVersion = '_v10_local_gnn_distributed';
+snrCacheVersion = '_v11_simplified_local_gnn';
 for fpIdx = 1:numel(snrFPs)
     snrFPs(fpIdx).fp = [snrFPs(fpIdx).fp snrCacheVersion];
 end
@@ -386,29 +383,13 @@ for s = 1:numScenarios
 
                 rho_DWMMSE_t = tic;
                 [rho_DWMMSE, dWMMSE_info] = computeRhoDistributedWMMSE(D, gainOverNoise, Pt, L, K, ...
-                    syncAblation.dwmmseRounds, 0.6);
+                    syncAblation.dwmmseRounds, params.dwmmse.damping);
                 rho_DWMMSE_sec = toc(rho_DWMMSE_t);
-
-                gainWithD = gainOverNoise .* D;
-                [~, bestAP] = max(gainWithD, [], 1);
-                d_baseline = sqrt(gainWithD(bestAP + (0:K-1)*L)).';
-                d_baseline = d_baseline / sqrt(sum(d_baseline.^2)) * sqrt(Pt);
-
-                if VERBOSE; fprintf(' PSO...'); end
-                [d_opt, iterUsed, bestFitness] = functionOptimize_d_PSO( ...
-                    Hhat, H, D, C, tau_c, tau_p, nbrOfRealizations, N, K, L, p, Pt, d_baseline);
-                rho_PSO = computeRhoFromD(d_opt, V_cache_mode.MR.scaling, D, Pt, K, L);
-
-                % PSO 记录
-                if snr_idx == num_snr
-                    PSO_info.iterUsed(end+1) = iterUsed;
-                    PSO_info.bestFitness(end+1) = bestFitness;
-                    if strcmp(modeName, 'All'); PSO_info.d_opt = d_opt; end
-                end
 
                 if VERBOSE; fprintf(' WMMSE...'); end
                 rho_WMMSE_t = tic;
-                [rho_WMMSE, ~] = computeRhoWMMSE(Hhat, D, Pt, N, K, L, nbrOfRealizations, 20, 1e-4);
+                [rho_WMMSE, ~] = computeRhoWMMSE(Hhat, D, Pt, N, K, L, ...
+                    nbrOfRealizations, params.wmmse.simMaxIter, params.wmmse.tol);
                 rho_WMMSE_sec = toc(rho_WMMSE_t);
 
                 rho_Random = computeRhoRandom(V_cache_mode.MR.scaling, D, Pt, K, L);
@@ -417,7 +398,6 @@ for s = 1:numScenarios
                 pa_rhos_mode.baseline = rho_baseline;
                 pa_rhos_mode.EPA      = rho_EPA;
                 pa_rhos_mode.DWMMSE   = rho_DWMMSE;
-                pa_rhos_mode.PSO      = rho_PSO;
                 pa_rhos_mode.WMMSE    = rho_WMMSE;
                 pa_rhos_mode.random   = rho_Random;
                 pa_rhos_all.(modeName) = pa_rhos_mode;
@@ -443,8 +423,8 @@ for s = 1:numScenarios
                     V_cells{ci} = V_cache_mode.(pcName).V;
                     sc_cells{ci} = V_cache_mode.(pcName).scaling;
                 end
-                % Must match paList order: baseline, random, EPA, D-WMMSE, WMMSE, PSO.
-                pa_trad_rhos = {rho_baseline, rho_Random, rho_EPA, rho_DWMMSE, rho_WMMSE, rho_PSO};
+                % Must match paList order: baseline, random, EPA, D-WMMSE, WMMSE.
+                pa_trad_rhos = {rho_baseline, rho_Random, rho_EPA, rho_DWMMSE, rho_WMMSE};
                 ESR_cell_mode = cell(numPC, numPA_trad);
                 parfor ci = 1:numPC
                     pcName = pcList{ci};
@@ -782,7 +762,7 @@ fprintf('=====================================================================\n
 
 %% ================= 打印最终排名 =================
 printFinalResults_v2(ESR_mean, algoTable, SNR_dB, ESR_best, ESR_best_algo, ...
-    PSO_info, numScenarios, nbrOfRealizations, isSaveFig, isSaveData, savePath, dataPath, Perf);
+    numScenarios, nbrOfRealizations, isSaveFig, isSaveData, savePath, dataPath, Perf);
 
 %% ================= 绘图 =================
 plotESRResults_v2(ESR_mean, ESR_best, ESR_best_algo, algoTable, SNR_dB, ...
@@ -872,18 +852,6 @@ function saveSNRCache(filePath, paramFingerprint, scenarioIdx, snr_dB, Pt, ...
         'pa_rhos_gnn_all', 'ESR_cell_gnn', ...
         'time_pa_sec', 'time_core_sec', 'comm_bytes', ...
         'modelModTimes', 'stage1_valid', 'stage2_valid', '-v7.3');
-end
-
-%% ------------------------------------------------------------------------
-function rho = computeRhoFromD(d_opt, scaling, D, Pt, K, L)
-% 从PSO优化得到的d向量计算rho
-    d2 = d_opt(:).^2;
-    powerPerAP = Pt / L;
-    apPower = (scaling .* D) * d2;
-    eta = zeros(size(apPower));
-    nonzeroAP = apPower > 0;
-    eta(nonzeroAP) = sqrt(powerPerAP ./ apPower(nonzeroAP));
-    rho = (eta.^2) .* (scaling .* D) .* (d2.');
 end
 
 %% ------------------------------------------------------------------------
@@ -988,9 +956,6 @@ function [rounds, bytes] = estimatePASync(paName, L, K, cfg, payloadRatio)
         case 'DWMMSE'
             rounds = cfg.dwmmseRounds;
             bytes = K * 8 * cfg.dwmmseRounds;
-        case 'PSO'
-            rounds = cfg.psoRounds;
-            bytes = (K * 16 + L * K * 8 * payloadRatio) * cfg.psoRounds;
         otherwise
             rounds = 0;
             bytes = 0;
