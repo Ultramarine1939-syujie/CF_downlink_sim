@@ -1,14 +1,13 @@
-function [rho, timing] = computeRhoLocalGNN(~, D, gainOverNoise, Pt, localModelPath, sigma_e)
-%computeRhoLocalGNN Strict AP-local neural power allocation.
-%   Each AP row is inferred from only its local gain/DCC row and scalar
-%   operating-point features. The Python call batches AP rows only to reduce
-%   MATLAB-Python overhead; there is no cross-AP message passing.
+function [rho, timing] = computeRhoRL(~, D, gainOverNoise, Pt, rlModelPath, sigma_e)
+%computeRhoRL DQN/DDPG power allocation through a cached Python runtime.
+%   RL checkpoints are trained from a large-scale sum-rate reward proxy, not
+%   from WMMSE labels. Missing checkpoints fall back to EPA.
 
     totalTic = tic;
     [L, K] = size(D);
     timing = emptyTiming();
 
-    if nargin < 5 || isempty(localModelPath) || ~isfile(localModelPath)
+    if nargin < 5 || isempty(rlModelPath) || ~isfile(rlModelPath)
         rho = computeRhoEPA(D, Pt, L, K);
         timing.total_sec = toc(totalTic);
         timing.forward_sec = timing.total_sec;
@@ -36,10 +35,10 @@ function [rho, timing] = computeRhoLocalGNN(~, D, gainOverNoise, Pt, localModelP
     end
 
     if isempty(cached_runtime)
-        cached_runtime = py.importlib.import_module('gnn_runtime_local');
+        cached_runtime = py.importlib.import_module('rl_runtime');
     end
 
-    result = cached_runtime.infer(localModelPath, sqrtGain, D, Pt, sigma_e);
+    result = cached_runtime.infer(rlModelPath, sqrtGain, D, Pt, sigma_e);
     rho_np = result{'rho'};
     rho_np = py.numpy.ascontiguousarray(rho_np);
     rho_flat = double(py.array.array('d', py.numpy.ravel(rho_np, pyargs('order', 'C'))));
@@ -47,6 +46,7 @@ function [rho, timing] = computeRhoLocalGNN(~, D, gainOverNoise, Pt, localModelP
 
     timing.load_sec = pyFloat(result, 'load_sec');
     timing.feature_sec = pyFloat(result, 'feature_sec');
+    timing.collate_sec = 0;
     timing.forward_sec = pyFloat(result, 'forward_sec');
     timing.post_sec = pyFloat(result, 'post_sec');
     timing.python_total_sec = pyFloat(result, 'python_total_sec');
@@ -60,6 +60,7 @@ function timing = emptyTiming()
         'bridge_sec', 0, ...
         'load_sec', 0, ...
         'feature_sec', 0, ...
+        'collate_sec', 0, ...
         'forward_sec', 0, ...
         'post_sec', 0, ...
         'python_total_sec', 0);

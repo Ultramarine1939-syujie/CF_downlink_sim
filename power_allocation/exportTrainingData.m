@@ -176,7 +176,7 @@ fprintf('\n数据生成总用时: %.1f 秒 (%.1f 分钟)\n', elapsed, elapsed/60
 
 fprintf('\n正在拼接数据...\n');
 sqrtGain_all  = cat(3, sqrtGain_cell{:});
-D_all         = cat(3, D_cell{:});
+D_snapshots   = cat(3, D_cell{:});
 sigma_e_all   = reshape([sigma_e_cell{:}], 1, 1, N_snaps);
 rho_WMMSE_all = cat(3, rho_WMMSE_cell{:});
 rho_Dist_all  = cat(3, rho_Dist_cell{:});
@@ -189,7 +189,7 @@ meta = meta_cell;
 fprintf('数据拼接完成!\n');
 
 features.sqrtGain = sqrtGain_all;
-features.D         = D_all;
+features.D         = D_snapshots;
 features.sigma_e   = sigma_e_all;
 
 labels.rho_WMMSE   = rho_WMMSE_all;
@@ -265,11 +265,7 @@ D_small         = D_small_3D(:, :, 1);
 
 gainOverNoise = db2pow(gainOverNoisedB);
 
-if strcmp(mode, 'All')
-    D = ones(L, K);
-else
-    D = D_small;
-end
+D = D_small;
 
 [Hhat, ~, ~, ~] = functionChannelEstimates(R, nbrOfRealizations, L, K, N, tau_p, pilotIndex, p);
 H = Hhat + sqrt(sigma_e^2/2) * (randn(size(Hhat)) + 1i*randn(size(Hhat)));

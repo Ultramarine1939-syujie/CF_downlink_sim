@@ -22,9 +22,6 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import ConcatDataset, DataLoader, Dataset, random_split
 
-from dataset import GNNDataset
-
-
 @dataclass
 class LocalFeatureConfig:
     """Feature schema shared by training and MATLAB-facing inference."""
@@ -121,36 +118,55 @@ class LocalAPDataset(Dataset):
         sample0 = base[0]
         self.L = int(sample0["D_mask"].shape[0])
         self.K = int(sample0["D_mask"].shape[1])
+        self.x, self.target, self.mask = self._materialize_rows()
+
+    def _materialize_rows(self) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        xs = []
+        targets = []
+        masks = []
+
+        for snap_idx in range(len(self.base)):
+            sample = self.base[snap_idx]
+            d = sample["D_mask"].float().numpy()
+            x_ap = sample["x_ap"].float().numpy()
+            gain = x_ap[:, :self.K]
+            snr_norm = x_ap[0, self.K]
+            sigma_e = x_ap[0, self.K + 1]
+
+            feat = build_local_features(
+                gain,
+                d,
+                np.array([snr_norm], dtype=np.float32),
+                np.array([sigma_e], dtype=np.float32),
+            )
+
+            target = sample["y_share"].float().numpy()
+            served = d > 0.5
+            row_target_sum = (target * served).sum(axis=1, keepdims=True)
+            served_count = served.sum(axis=1, keepdims=True)
+            fallback_rows = (served_count > 0) & (row_target_sum <= 0)
+            fallback = served.astype(np.float32) / np.maximum(served_count, 1.0)
+            target = np.where(fallback_rows, fallback, target).astype(np.float32)
+            valid = (served & np.isfinite(target)).astype(np.float32)
+
+            xs.append(feat)
+            targets.append(target)
+            masks.append(valid)
+
+        return (
+            torch.from_numpy(np.concatenate(xs, axis=0).astype(np.float32)),
+            torch.from_numpy(np.concatenate(targets, axis=0).astype(np.float32)),
+            torch.from_numpy(np.concatenate(masks, axis=0).astype(np.float32)),
+        )
 
     def __len__(self) -> int:
-        return len(self.base) * self.L
+        return int(self.x.shape[0])
 
     def __getitem__(self, idx: int) -> Dict[str, torch.Tensor]:
-        snap_idx = idx // self.L
-        ap_idx = idx % self.L
-        sample = self.base[snap_idx]
-
-        d_row = sample["D_mask"][ap_idx].float()
-        x_ap_row = sample["x_ap"][ap_idx].float()
-        gain_row = x_ap_row[:self.K]
-        snr_norm = x_ap_row[self.K]
-        sigma_e = x_ap_row[self.K + 1]
-
-        gain_np = gain_row.numpy().reshape(1, self.K)
-        d_np = d_row.numpy().reshape(1, self.K)
-        feat = build_local_features(gain_np, d_np, np.array([snr_norm.item()]), np.array([sigma_e.item()]))[0]
-
-        target = sample["y_share"][ap_idx].float()
-        served = d_row > 0.5
-        if served.any() and float(target[served].sum()) <= 0:
-            target = torch.zeros_like(target)
-            target[served] = 1.0 / float(served.sum())
-
-        valid = served & torch.isfinite(target)
         return {
-            "x": torch.from_numpy(feat),
-            "target": target,
-            "mask": valid.float(),
+            "x": self.x[idx],
+            "target": self.target[idx],
+            "mask": self.mask[idx],
         }
 
 
@@ -227,6 +243,8 @@ def train_epoch(model: nn.Module, loader: DataLoader, optimizer: optim.Optimizer
 
 
 def load_local_dataset(pattern: str, L: int, K: int) -> Dataset:
+    from dataset import GNNDataset
+
     files = sorted(glob.glob(pattern))
     if not files:
         raise FileNotFoundError(f"No files matched pattern: {pattern}")

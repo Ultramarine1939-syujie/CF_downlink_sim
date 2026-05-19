@@ -10,18 +10,22 @@ algoPAs = {algoTable.pa};
 algoPCs = {algoTable.pc};
 algoModes = {algoTable.mode};
 
-paOrder = {'LocalGNN', 'GNN', 'DWMMSE', 'WMMSE', 'EPA', 'random', 'baseline'};
-paLabels = {'Local-GNN', 'GNN', 'D-WMMSE', 'WMMSE', 'EPA', 'Random', 'Baseline'};
+paOrder = {'LocalGNN', 'DCGNN', 'GNN', 'DDPG', 'DQN', 'DWMMSE', 'WMMSE', 'FPCP', 'EPA', 'random', 'baseline'};
+paLabels = {'Local-GNN', 'DCGNN', 'GNN', 'DDPG', 'DQN', 'D-WMMSE', 'WMMSE', 'FPCP', 'EPA', 'Random', 'Baseline'};
 paColors = [
     0.00 0.52 0.58
+    0.10 0.35 0.95
     0.45 0.00 0.75
+    0.80 0.25 0.65
+    0.35 0.45 0.90
     0.95 0.55 0.10
     0.85 0.15 0.15
+    0.10 0.55 0.25
     0.00 0.60 0.00
     0.55 0.55 0.55
     0.20 0.20 0.20
 ];
-paMarkers = {'x', 'o', 'h', 's', 'd', 'v', 'p'};
+paMarkers = {'x', '^', 'o', '+', '*', 'h', 's', '>', 'd', 'v', 'p'};
 
 FS_AXIS = 12;
 FS_TITLE = 13;
@@ -33,18 +37,15 @@ if isSaveFig && ~exist(savePath, 'dir')
     mkdir(savePath);
 end
 
-%% Fig 1: Best PC per PA, DCC mode preferred for current GNN deployment
+%% Fig 1: Best PC per PA in DCC mode
 fig1 = figure('Visible', 'off', 'Position', [100 100 950 560]);
 hold on;
 legendLabels = {};
 for pi = 1:numel(paOrder)
     idx = getBestCurve(ESR_mean, algoTable, paOrder{pi}, 'DCC');
-    if isempty(idx)
-        idx = getBestCurve(ESR_mean, algoTable, paOrder{pi}, 'All');
-    end
     if isempty(idx); continue; end
     lw = LW_BASE;
-    if any(strcmp(paOrder{pi}, {'GNN', 'LocalGNN'})); lw = LW_GNN; end
+    if any(strcmp(paOrder{pi}, {'GNN', 'LocalGNN', 'DCGNN', 'DQN', 'DDPG'})); lw = LW_GNN; end
     plot(SNR_dB, ESR_mean(idx, :), ['-' paMarkers{pi}], ...
         'Color', paColors(pi, :), 'LineWidth', lw, 'MarkerSize', 7);
     legendLabels{end+1} = sprintf('%s + %s (%s)', paLabels{pi}, ...
@@ -64,12 +65,9 @@ legendLabels = {};
 fixedPC = 'RMMSE';
 for pi = 1:numel(paOrder)
     idx = findExact(algoTable, paOrder{pi}, fixedPC, 'DCC');
-    if isempty(idx)
-        idx = findExact(algoTable, paOrder{pi}, fixedPC, 'All');
-    end
     if isempty(idx); continue; end
     lw = LW_BASE;
-    if any(strcmp(paOrder{pi}, {'GNN', 'LocalGNN'})); lw = LW_GNN; end
+    if any(strcmp(paOrder{pi}, {'GNN', 'LocalGNN', 'DCGNN', 'DQN', 'DDPG'})); lw = LW_GNN; end
     plot(SNR_dB, ESR_mean(idx, :), ['-' paMarkers{pi}], ...
         'Color', paColors(pi, :), 'LineWidth', lw, 'MarkerSize', 7);
     legendLabels{end+1} = sprintf('%s (%s)', paLabels{pi}, algoModes{idx}); %#ok<AGROW>
@@ -81,12 +79,12 @@ legend(legendLabels, 'Location', 'SouthEast', 'FontSize', FS_LEG);
 grid on; box on; set(gca, 'FontSize', FS_AXIS);
 saveFigure(fig2, savePath, isSaveFig, 'Fig2_RMMSE_PA_Comparison');
 
-%% Fig 3: GNN-family gap to WMMSE under the same PC/mode
+%% Fig 3: Learning-family gap to WMMSE under the same PC/mode
 fig3 = figure('Visible', 'off', 'Position', [100 100 900 560]);
 wmmseIdx = findExact(algoTable, 'WMMSE', fixedPC, 'DCC');
-gnnFamily = {'LocalGNN', 'GNN'};
-gnnFamilyLabels = {'Local-GNN', 'GNN'};
-gnnFamilyColors = [paColors(1, :); paColors(2, :)];
+gnnFamily = {'LocalGNN', 'DCGNN', 'GNN', 'DDPG', 'DQN'};
+gnnFamilyLabels = {'Local-GNN', 'DCGNN', 'GNN', 'DDPG', 'DQN'};
+gnnFamilyColors = [paColors(1, :); paColors(2, :); paColors(3, :); paColors(4, :); paColors(5, :)];
 gapPctMat = [];
 gapLabels = {};
 gapColors = [];
@@ -104,7 +102,7 @@ else
     end
 
     if isempty(gapPctMat)
-        text(0.5, 0.5, 'GNN-family R-MMSE DCC results unavailable', ...
+        text(0.5, 0.5, 'Learning-family R-MMSE DCC results unavailable', ...
             'Units', 'normalized', 'HorizontalAlignment', 'center', 'FontSize', FS_AXIS);
     else
         b = bar(SNR_dB, gapPctMat, 0.68, 'grouped');
@@ -128,7 +126,7 @@ else
     end
     xlabel('SNR (dB)', 'FontSize', FS_AXIS);
     ylabel('ESR Gap to WMMSE (%)', 'FontSize', FS_AXIS);
-    title('GNN-family Gap to WMMSE (R-MMSE, DCC)', 'FontSize', FS_TITLE);
+    title('Learning-family Gap to WMMSE (R-MMSE, DCC)', 'FontSize', FS_TITLE);
     grid on; box on; set(gca, 'FontSize', FS_AXIS);
 end
 saveFigure(fig3, savePath, isSaveFig, 'Fig3_GNN_WMMSE_Gap');
@@ -148,16 +146,15 @@ end
 line([0.02 0.98], [0.90 0.90], 'Color', [0.25 0.25 0.25], 'LineWidth', 1.2);
 
 wmmseBestIdx = getBestCurve(ESR_mean, algoTable, 'WMMSE', 'DCC');
-if isempty(wmmseBestIdx); wmmseBestIdx = getBestCurve(ESR_mean, algoTable, 'WMMSE', 'All'); end
 wmmseAvg = mean(ESR_mean(wmmseBestIdx, :));
 
-notes = containers.Map(paOrder, {'AP-local learned split', 'full-graph learned split', ...
-    'fixed-round distributed update', 'iterative reference', 'equal power', ...
-    'random baseline', 'large-scale baseline'});
+notes = containers.Map(paOrder, {'AP-local learned split', 'dynamic graph learned split', ...
+    'full-graph learned split', 'DDPG reward-trained split', 'DQN reward-trained alpha', ...
+    'fixed-round distributed update', 'iterative reference', 'fractional power control', ...
+    'equal power', 'random baseline', 'large-scale baseline'});
 
 for pi = 1:numel(paOrder)
     idx = getBestCurve(ESR_mean, algoTable, paOrder{pi}, 'DCC');
-    if isempty(idx); idx = getBestCurve(ESR_mean, algoTable, paOrder{pi}, 'All'); end
     if isempty(idx); continue; end
     if pi == 1
         patch([0.01 0.99 0.99 0.01], [rowY - 0.035 rowY - 0.035 rowY + 0.055 rowY + 0.055], ...
@@ -175,7 +172,7 @@ end
 title('Current Method Summary', 'FontSize', FS_TITLE);
 saveFigure(fig4, savePath, isSaveFig, 'Fig4_Method_Summary');
 
-%% Fig 5: WMMSE vs GNN-family timing, split by end-to-end and core compute
+%% Fig 5: WMMSE vs learning-family timing, split by end-to-end and core compute
 fig5 = figure('Visible', 'off', 'Position', [100 100 1120 720]);
 if nargin < 11 || isempty(Perf) || ~isfield(Perf, 'time_pa_sec') || ~isfield(Perf, 'methodNames')
     text(0.5, 0.5, 'Timing data unavailable', ...
@@ -184,8 +181,11 @@ else
     wIdx = find(strcmp(Perf.methodNames, 'WMMSE'), 1);
     gIdx = find(strcmp(Perf.methodNames, 'GNN'), 1);
     lIdx = find(strcmp(Perf.methodNames, 'Local-GNN'), 1);
-    if isempty(wIdx) || (isempty(gIdx) && isempty(lIdx))
-        text(0.5, 0.5, 'WMMSE/GNN-family timing rows unavailable', ...
+    dIdx = find(strcmp(Perf.methodNames, 'DCGNN'), 1);
+    dqIdx = find(strcmp(Perf.methodNames, 'DQN'), 1);
+    ddIdx = find(strcmp(Perf.methodNames, 'DDPG'), 1);
+    if isempty(wIdx) || (isempty(gIdx) && isempty(lIdx) && isempty(dIdx) && isempty(dqIdx) && isempty(ddIdx))
+        text(0.5, 0.5, 'WMMSE/learning-family timing rows unavailable', ...
             'Units', 'normalized', 'HorizontalAlignment', 'center', 'FontSize', FS_AXIS);
     else
         wmmseE2E = getPerfCurve(Perf.time_pa_sec, wIdx);
@@ -200,7 +200,22 @@ else
         if ~isempty(gIdx)
             methodIdx(end+1) = gIdx; %#ok<AGROW>
             methodLabels{end+1} = 'GNN'; %#ok<AGROW>
+            methodColors(end+1, :) = paColors(3, :); %#ok<AGROW>
+        end
+        if ~isempty(dIdx)
+            methodIdx(end+1) = dIdx; %#ok<AGROW>
+            methodLabels{end+1} = 'DCGNN'; %#ok<AGROW>
             methodColors(end+1, :) = paColors(2, :); %#ok<AGROW>
+        end
+        if ~isempty(ddIdx)
+            methodIdx(end+1) = ddIdx; %#ok<AGROW>
+            methodLabels{end+1} = 'DDPG'; %#ok<AGROW>
+            methodColors(end+1, :) = paColors(4, :); %#ok<AGROW>
+        end
+        if ~isempty(dqIdx)
+            methodIdx(end+1) = dqIdx; %#ok<AGROW>
+            methodLabels{end+1} = 'DQN'; %#ok<AGROW>
+            methodColors(end+1, :) = paColors(5, :); %#ok<AGROW>
         end
 
         e2eMat = zeros(numel(methodIdx), num_snr);
@@ -220,20 +235,20 @@ else
         end
 
         tiledlayout(2, 2, 'TileSpacing', 'compact', 'Padding', 'compact');
-        plotTimeComparison(SNR_dB, wmmseE2E, e2eMat, methodLabels, methodColors, paColors(4, :), ...
+        plotTimeComparison(SNR_dB, wmmseE2E, e2eMat, methodLabels, methodColors, paColors(7, :), ...
             FS_AXIS, FS_TITLE, FS_LEG, ...
             'End-to-End PA Time', 'Includes MATLAB-Python Bridge');
         plotSpeedupComparison(SNR_dB, wmmseE2E ./ e2eMat, methodLabels, methodColors, ...
             FS_AXIS, FS_TITLE, FS_LEG, ...
             'End-to-End Speedup');
-        plotTimeComparison(SNR_dB, wmmseCore, coreMat, methodLabels, methodColors, paColors(4, :), ...
+        plotTimeComparison(SNR_dB, wmmseCore, coreMat, methodLabels, methodColors, paColors(7, :), ...
             FS_AXIS, FS_TITLE, FS_LEG, ...
             'Core Compute Time', 'WMMSE loop vs GNN forward');
         plotSpeedupComparison(SNR_dB, wmmseCore ./ coreMat, methodLabels, methodColors, ...
             FS_AXIS, FS_TITLE, FS_LEG, ...
             'Core Compute Speedup');
 
-        sgtitle(sprintf('WMMSE vs GNN-family Timing: WMMSE E2E %.3f ms, Core %.3f ms', ...
+        sgtitle(sprintf('WMMSE vs Learning-family Timing: WMMSE E2E %.3f ms, Core %.3f ms', ...
             mean(wmmseE2E) * 1000, mean(wmmseCore) * 1000), 'FontSize', FS_TITLE);
     end
 end
@@ -261,9 +276,6 @@ function bestIdx = getBestCurve(ESR_mean, algoTable, paKey, modeKey)
 algoPAs = {algoTable.pa};
 algoModes = {algoTable.mode};
 idxList = find(strcmp(algoPAs, paKey) & strcmp(algoModes, modeKey));
-if isempty(idxList)
-    idxList = find(strcmp(algoPAs, paKey));
-end
 if isempty(idxList); bestIdx = []; return; end
 [~, relBest] = max(mean(ESR_mean(idxList, :), 2));
 bestIdx = idxList(relBest);

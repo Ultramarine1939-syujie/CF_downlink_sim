@@ -160,9 +160,9 @@ exportTrainingData(fullfile(pwd, 'data', 'gnn_training'), 2)
 |------|--------|------|
 | 文件名格式 | `gnn_training_data_YYYYMMDD_HHMMSS.mat` | 含时间戳 |
 | SNR 范围 | 10:5:30 dB | 共 5 个 SNR 点 |
-| 接入模式 | All + DCC | 两种模式 |
+| 接入模式 | DCC | 统一使用动态 AP-UE 关联 |
 | 每 SNR 快照数 | 500 | 可自定义 |
-| 总数据量 | 5 × 500 × 2 = 5000 条 | 取决于参数 |
+| 总数据量 | 5 × 500 = 2500 条 | 取决于参数 |
 | 数据增强 | 随机丢弃 AP + CSI 误差扰动 | 提升泛化能力 |
 
 ---
@@ -198,6 +198,12 @@ python train_gnn.py --data "../data/gnn_training/gnn_training_data_20260428_1915
 # 使用 glob 匹配多个数据文件（推荐）
 python train_gnn.py --data "../data/gnn_training/*.mat" --epochs 300
 
+# 训练动态连接 DCGNN 对比模型
+python train_gnn.py --data "../data/gnn_training/*.mat" --epochs 300 --model_type dcgnn --dcgnn_top_z 15
+
+# 训练不使用 WMMSE 标签的 DQN/DDPG 强化学习对比模型
+python train_rl_power.py --data "../data/gnn_training/*.mat" --method all --epochs 100
+
 # 训练严格分布式的 AP-local GNN
 python train_gnn_local.py --data "../data/gnn_training/*.mat" --epochs 120
 ```
@@ -206,6 +212,7 @@ python train_gnn_local.py --data "../data/gnn_training/*.mat" --epochs 120
 
 ```bash
 python train_gnn.py --data "../data/gnn_training/*.mat" --epochs 10 --batch_size 64
+python train_rl_power.py --data "../data/gnn_training/*.mat" --method all --epochs 10
 python train_gnn_local.py --data "../data/gnn_training/*.mat" --epochs 10
 ```
 
@@ -233,6 +240,9 @@ python train_gnn_local.py --data "../data/gnn_training/*.mat" --epochs 10
 |--------|------|
 | `best_gat_gnn_power.pt` | **验证集最优模型**（推荐使用） |
 | `best_local_gnn_power.pt` | **Local-GNN 最优模型**（严格分布式 GNN 候选） |
+| `best_dcgnn_power.pt` | **DCGNN 最优模型**（动态 top-z 图连接候选） |
+| `best_dqn_power.pt` | **DQN 最优模型**（离散 FPCP 指数动作，奖励训练，不用 WMMSE 标签） |
+| `best_ddpg_power.pt` | **DDPG 最优模型**（连续功率份额 actor，奖励训练，不用 WMMSE 标签） |
 | `final_gat_gnn_power.pt` | 最后一轮模型 |
 | `training_log.csv` | 训练过程指标记录 |
 
@@ -250,7 +260,10 @@ python train_gnn_local.py --data "../data/gnn_training/*.mat" --epochs 10
 CF_downlink_sim/
 └── models/
     ├── best_gat_gnn_power.pt      # 全图 GNN 推理模型（Step 4 产出）
-    └── best_local_gnn_power.pt    # Local-GNN 推理模型（可选，缺失则回退 EPA）
+    ├── best_local_gnn_power.pt    # Local-GNN 推理模型（可选，缺失则回退 EPA）
+    ├── best_dcgnn_power.pt        # DCGNN 推理模型（可选，缺失则回退 EPA）
+    ├── best_dqn_power.pt          # DQN 推理模型（可选，缺失则回退 EPA）
+    └── best_ddpg_power.pt         # DDPG 推理模型（可选，缺失则回退 EPA）
 ```
 
 > ⚠️ **重要**：如果缺少这些文件，对应 GNN 算法会自动回退到 EPA（等功率分配），不影响其他算法运行。
@@ -293,7 +306,7 @@ matlab -batch "cd('C:\Users\Admin\Documents\个人资料\CF_downlink_sim'); run"
 - 各 SNR 点最佳算法排名
 - 功率分配计算时间对比
 - 通信开销对比
-- 预编码 × 功率分配的同步时延消融图（Pareto、热力图、R-MMSE 固定对比）
+- 预编码 × 功率分配的同步时延消融图（Pareto、热力图、R-MMSE/L-MMSE/MR 固定对比）
 
 同步时延消融结果还会导出到：
 - `main/SimulationData/Sync_Ablation_Table.csv`
@@ -328,7 +341,7 @@ params.training.nSnapshotsPerSNR = 500;    % 每个 SNR/模式的训练快照数
 | 更宽 SNR 范围 | `params.power.SNR_dB=-10:2:30` | 更细粒度 |
 | 仅跑传统算法 | `params.runtime.runStage=1` | 跳过 GNN 部分 |
 | 仅重跑 GNN | `params.runtime.runStage=2` | 传统方法从缓存加载 |
-| 关闭同步时延消融 | `params.syncAblation.enable=false` | 不生成 FigA5-FigA7 |
+| 关闭同步时延消融 | `params.syncAblation.enable=false` | 不生成 FigA5-FigA9 |
 
 同步时延模型可通过 `params.syncAblation` 配置块调节，关键参数包括
 `fronthaulMbps`、`syncRttMs`、`dccPayloadRatio` 和 `includeComputeTime`。
@@ -384,7 +397,7 @@ main/SimulationData/
 
 ## 🔬 算法组合说明
 
-仿真系统自动遍历 **56 种算法组合**（7 PA × 4 PC × 2 Mode）：
+仿真系统自动遍历 **44 种算法组合**（11 PA × 4 PC × 1 Mode）：
 
 ### 功率分配方法 (PA)
 
@@ -392,13 +405,17 @@ main/SimulationData/
 |------|------|--------|------|
 | **Baseline** | 传统 | O(LK) | 基于大尺度衰落距离比 |
 | **EPA** | 传统 | O(LK) | 等功率分配 |
+| **FPCP** | 传统 | O(LK) | 分数功率控制；当前下行 sum-rate 配置默认向强链路倾斜 |
 | **D-WMMSE** | 分布式 | O(固定轮次×LK) | 固定消息交换轮次的分布式 WMMSE 近似 |
 | **Local-GNN** | 分布式智能 | O(L×前向传播) | 每个 AP 仅用本地 AP-UE 行独立推理 |
 | **WMMSE** | 传统 | O(迭代×LK²) | 加权最小均方误差（最慢但最优） |
 | **Random** | 传统 | O(LK) | 随机分配基线 |
 | **GNN** | 智能参考 | O(前向传播) | 全图 GAT-GNN 低时延参考 |
+| **DCGNN** | 智能参考 | O(动态图前向传播) | 动态 top-z 图连接的 GNN 对比模型 |
+| **DQN** | 强化学习参考 | O(前向传播 + 离散动作选择) | 不使用 WMMSE 标签，选择奖励最优的 FPCP 指数动作 |
+| **DDPG** | 强化学习参考 | O(actor 前向传播) | 不使用 WMMSE 标签，以 FPCP 为基础策略学习连续 residual |
 
-主排名只统计 PC 和 PA 均满足分布式信息约束的组合。Local-GNN、D-WMMSE、EPA、Baseline、Random 可作为分布式 PA 候选；WMMSE、L-MMSE-G 和当前全图 GNN 保留为集中式参考。
+主排名只统计 PC 和 PA 均满足分布式信息约束的组合。Local-GNN、D-WMMSE、FPCP、EPA、Baseline、Random 可作为分布式 PA 候选；WMMSE、L-MMSE-G、GNN、DCGNN、DQN 和 DDPG 保留为集中式/低时延学习参考。
 
 ### 预编码方法 (PC)
 
@@ -413,7 +430,6 @@ main/SimulationData/
 
 | 模式 | 说明 |
 |------|------|
-| **All** | 所有 AP 服务所有 UE |
 | **DCC** | 基于大尺度衰落的动态关联 |
 
 ---
@@ -426,6 +442,10 @@ main/SimulationData/
 |------|---------|---------|---------|---------|
 | WMMSE | ⭐⭐⭐⭐⭐ | 高 | O(LK) CSI | 集中式基准 |
 | GNN | ⭐⭐⭐⭐ | **极低** | **零** | 本地实时 |
+| DCGNN | ⭐⭐⭐⭐ | 低 | 动态图特征 | 动态拓扑学习参考 |
+| DDPG | ⭐⭐⭐ | 低 | 全局特征 | 连续动作 RL 参考 |
+| DQN | ⭐⭐⭐ | 低 | 全局特征 | 离散动作 RL 参考 |
+| FPCP | ⭐⭐⭐ | 极低 | 零 | 可扩展传统基线 |
 | EPA | ⭐⭐ | 极低 | 零 | 简单基线 |
 | Baseline | ⭐⭐ | 极低 | 零 | 距离基线 |
 
@@ -579,6 +599,7 @@ CF_downlink_sim/
 ├── power_allocation/                  # ⚡ 功率分配算法
 │   ├── computeRhoDist.m              # Baseline（距离基线）
 │   ├── computeRhoEPA.m               # 等功率分配
+│   ├── computeRhoFPCP.m              # 分数功率控制
 │   ├── computeRhoDistributedWMMSE.m   # 固定轮次分布式 WMMSE 近似
 │   ├── computeRhoWMMSE.m             # WMMSE（迭代优化）
 │   ├── computeRhoGNN.m               # GNN 推理接口
@@ -602,7 +623,7 @@ CF_downlink_sim/
 │   └── SimulationLogger.m            # 日志系统
 │
 ├── python/                            # 🤖 Python 智能模块
-│   ├── train_gnn.py                   # GAT-GNN 训练主脚本
+│   ├── train_gnn.py                   # GAT-GNN / DCGNN 训练主脚本
 │   ├── train_gnn_local.py             # AP-local GNN 训练脚本
 │   ├── gnn_runtime_local.py           # AP-local MATLAB 推理运行时
 │   ├── dataset.py                    # 数据集加载器

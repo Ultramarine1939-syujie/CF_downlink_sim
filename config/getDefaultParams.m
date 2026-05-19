@@ -70,8 +70,8 @@ params.simulation.numScenarios = 10;
 params.simulation.nbrOfRealizations = 200;
 params.simulation.seed = 42;
 
-% AP 接入模式。All 表示全 AP 服务；DCC 表示动态 AP-UE 关联。
-params.simulation.accessModes = {'All', 'DCC'};
+% AP 接入模式。当前项目统一使用 DCC 动态 AP-UE 关联。
+params.simulation.accessModes = {'DCC'};
 
 %% ================= 6. 主仿真运行控制 =================
 params.runtime = struct();
@@ -98,18 +98,22 @@ params.dwmmse = struct();
 params.dwmmse.rounds = 5;                % D-WMMSE 固定消息交换轮次
 params.dwmmse.damping = 0.6;             % D-WMMSE 阻尼系数
 
+params.fpcp = struct();
+params.fpcp.alpha = -1.0;                % FPCP 分数补偿指数；0=EPA，负值在下行 sum-rate 中偏向强链路
+
 %% ================= 9. 同步时延消融参数 =================
 params.syncAblation = struct();
 params.syncAblation.enable = true;       % 是否输出 PA/PC 同步时延消融图
 params.syncAblation.fronthaulMbps = 1000; % 控制/前传链路速率，单位 Mbps
 params.syncAblation.syncRttMs = 0.05;    % 单轮同步控制往返时延，单位 ms
-params.syncAblation.dccPayloadRatio = 0.35; % DCC 相对 All 的同步载荷比例
+params.syncAblation.dccPayloadRatio = 0.35; % DCC 同步载荷折算比例
 params.syncAblation.includeComputeTime = true; % 控制时延是否叠加 PA 计算时间
 
 %% ================= 10. GNN 模型路径与训练超参数 =================
 params.gnn = struct();
 params.gnn.fullModelFile = fullfile('models', 'best_gat_gnn_power.pt');
 params.gnn.localModelFile = fullfile('models', 'best_local_gnn_power.pt');
+params.gnn.dcgnnModelFile = fullfile('models', 'best_dcgnn_power.pt');
 params.gnn.hidden_dim = 128;
 params.gnn.num_heads = 4;
 params.gnn.num_layers = 3;
@@ -118,6 +122,10 @@ params.gnn.batch_size = 32;
 params.gnn.lr_max = 1e-3;
 params.gnn.val_split = 0.15;
 params.gnn.patience = 50;
+
+params.rl = struct();
+params.rl.dqnModelFile = fullfile('models', 'best_dqn_power.pt');
+params.rl.ddpgModelFile = fullfile('models', 'best_ddpg_power.pt');
 
 %% ================= 11. 训练数据导出参数 =================
 params.training = struct();

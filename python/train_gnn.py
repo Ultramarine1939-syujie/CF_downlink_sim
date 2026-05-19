@@ -18,7 +18,40 @@ from torch.utils.data import DataLoader, random_split
 from torch_geometric.nn import GATConv
 from torch_geometric.data import Data, Batch
 
-def custom_collate(batch):
+
+def _build_bipartite_edges(item, L, K, dynamic_top_z=None):
+    D = item['D_mask'].numpy()
+    if dynamic_top_z is None or dynamic_top_z <= 0:
+        edge_mask = D > 0.5
+    else:
+        gains = item['x_ap'][:, :K].numpy()
+        edge_mask = np.zeros_like(D, dtype=bool)
+        z = int(dynamic_top_z)
+
+        for l in range(L):
+            served = np.where(D[l, :] > 0.5)[0]
+            if served.size == 0:
+                continue
+            top = served[np.argsort(gains[l, served])[-min(z, served.size):]]
+            edge_mask[l, top] = True
+
+        for k in range(K):
+            serving = np.where(D[:, k] > 0.5)[0]
+            if serving.size == 0:
+                continue
+            top = serving[np.argsort(gains[serving, k])[-min(z, serving.size):]]
+            edge_mask[top, k] = True
+
+        if not edge_mask.any():
+            edge_mask = D > 0.5
+
+    ap_src, ue_dst = np.where(edge_mask)
+    if ap_src.size == 0:
+        ap_src, ue_dst = np.where(D > 0.5)
+    return ap_src, ue_dst
+
+
+def custom_collate(batch, dynamic_top_z=None):
     """
     自定义 collate 函数 - 支持 GAT 批训练
 
@@ -69,7 +102,7 @@ def custom_collate(batch):
         D = item['D_mask'].numpy()  # (L, K)
 
         # AP -> UE 边 (正向)
-        ap_src, ue_dst = np.where(D == 1)
+        ap_src, ue_dst = _build_bipartite_edges(item, L, K, dynamic_top_z)
         edge_ap2ue = np.array([ap_src, ue_dst + num_ap_nodes])  # (2, num_edges)
         edge_index_ap2ue_list.append(torch.LongTensor(edge_ap2ue))
 
@@ -126,11 +159,12 @@ class PowerGNN_MLP(nn.Module):
     """
 
     def __init__(self, L=100, K=20, hidden_dim=128, num_layers=3,
-                 dropout=0.15, output_scale=None):
+                 dropout=0.15, output_scale=None, output_kind="share_logits"):
         super().__init__()
         self.L = L
         self.K = K
         self.hidden_dim = hidden_dim
+        self.output_kind = output_kind
 
         self.ap_input_dim = K + 4
         self.ue_input_dim = L + 4
@@ -198,7 +232,8 @@ class PowerGNN_MLP(nn.Module):
         rho_flat = self.ap_predictor(pred_input)  # (batch, K)
 
         # tanh + reshape to (batch, L, K)
-        rho_flat = torch.tanh(rho_flat) * self.output_scale
+        if self.output_kind != "share_logits":
+            rho_flat = torch.tanh(rho_flat) * self.output_scale
         rho = rho_flat.view(batch_size, self.L, self.K)
 
         return rho
@@ -339,12 +374,13 @@ class PowerGNN_GAT(nn.Module):
     """
 
     def __init__(self, L=100, K=20, hidden_dim=128, num_heads=4, num_layers=3,
-                 dropout=0.15, edge_dim=1, output_scale=None):
+                 dropout=0.15, edge_dim=1, output_scale=None, output_kind="share_logits"):
         super().__init__()
         self.L = L
         self.K = K
         self.hidden_dim = hidden_dim
         self.num_heads = num_heads
+        self.output_kind = output_kind
 
         # 节点特征维度
         self.ap_input_dim = K + 4   # AP 节点: masked sqrt(gain) + SNR/CSI/degree/gain context
@@ -447,7 +483,8 @@ class PowerGNN_GAT(nn.Module):
         rho_flat = self.ap_predictor(ap_pred_input)         # (batch*L, K)
 
         # ── 6. tanh 约束输出范围 + reshape ──
-        rho_flat = torch.tanh(rho_flat) * self.output_scale  # (batch*L, K)
+        if self.output_kind != "share_logits":
+            rho_flat = torch.tanh(rho_flat) * self.output_scale  # (batch*L, K)
         rho = rho_flat.view(batch_size, num_ap, num_ue)       # (batch, L, K)
 
         return rho
@@ -503,6 +540,28 @@ def compute_loss(rho_pred, rho_true, D_mask, rho_is_nonzero, target_share=None):
     return huber_loss + 2.0 * share_loss
 
 
+def logits_to_share(logits, D_mask):
+    valid_rows = D_mask.sum(dim=2, keepdim=True) > 0
+    masked_logits = logits.masked_fill(D_mask <= 0.5, -1e9)
+    share = torch.softmax(masked_logits, dim=2) * D_mask.float()
+    row_sum = share.sum(dim=2, keepdim=True)
+    return torch.where(valid_rows, share / row_sum.clamp_min(1e-12), share)
+
+
+def compute_share_loss(logits, D_mask, target_share):
+    pred_share = logits_to_share(logits, D_mask.float())
+    share_mask = D_mask > 0.5
+    if not torch.any(share_mask):
+        return logits.sum() * 0.0
+    mse_loss = torch.nn.functional.mse_loss(
+        pred_share[share_mask],
+        target_share[share_mask],
+        reduction='mean'
+    )
+    ce_loss = -(target_share[share_mask] * torch.log(pred_share[share_mask].clamp_min(1e-12))).mean()
+    return mse_loss + 0.05 * ce_loss
+
+
 def train_epoch(model, dataloader, optimizer, scheduler, device):
     """训练一个 epoch"""
     model.train()
@@ -521,7 +580,7 @@ def train_epoch(model, dataloader, optimizer, scheduler, device):
         nz_batched = batch.rho_is_nonzero.view(-1, model.L, model.K)  # (batch, L, K)
         share_batched = batch.y_share.view(-1, model.L, model.K)
 
-        loss = compute_loss(rho_pred, y_batched, D_batched, nz_batched, share_batched)
+        loss = compute_share_loss(rho_pred, D_batched, share_batched)
 
         if torch.isnan(loss) or torch.isinf(loss):
             print("Warning: NaN/Inf loss, skipping")
@@ -558,12 +617,12 @@ def evaluate(model, dataloader, device):
             nz_batched = batch.rho_is_nonzero.view(-1, model.L, model.K)
             share_batched = batch.y_share.view(-1, model.L, model.K)
 
-            mse = compute_loss(rho_pred, y_batched, D_batched, nz_batched, share_batched).item()
+            mse = compute_share_loss(rho_pred, D_batched, share_batched).item()
             total_mse += mse * rho_pred.shape[0]
 
-            nonzero_mask = (nz_batched > 0.5) & (D_batched > 0.5)
-            all_rho_pred.append(rho_pred.cpu())
-            all_rho_true.append(y_batched.cpu())
+            nonzero_mask = D_batched > 0.5
+            all_rho_pred.append(logits_to_share(rho_pred, D_batched.float()).cpu())
+            all_rho_true.append(share_batched.cpu())
             all_nonzero_mask.append(nonzero_mask.cpu())
 
             n_samples += rho_pred.shape[0]
@@ -610,6 +669,10 @@ def main():
     parser.add_argument('--val_split', type=float, default=0.15, help='Validation split ratio')
     parser.add_argument('--output_dir', type=str, default='../models', help='Output directory')
     parser.add_argument('--patience', type=int, default=50, help='Early stopping patience (in epochs)')
+    parser.add_argument('--model_type', type=str, default='gat', choices=['gat', 'dcgnn'],
+                        help='gat uses all DCC AP-UE edges; dcgnn keeps dynamic top-z dominant edges')
+    parser.add_argument('--dcgnn_top_z', type=int, default=15,
+                        help='Number of dominant AP-UE neighbors retained per AP/UE for model_type=dcgnn')
     args = parser.parse_args()
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -668,18 +731,21 @@ def main():
     print(f"\nTrain size: {train_size}, Val size: {val_size}")
 
     # 创建数据加载器
+    dynamic_top_z = args.dcgnn_top_z if args.model_type == 'dcgnn' else None
+    collate_fn = (lambda batch: custom_collate(batch, dynamic_top_z=dynamic_top_z))
+
     train_loader = DataLoader(
         train_dataset,
         batch_size=args.batch_size,
         shuffle=True,
-        collate_fn=custom_collate,
+        collate_fn=collate_fn,
         num_workers=0
     )
     val_loader = DataLoader(
         val_dataset,
         batch_size=args.batch_size,
         shuffle=False,
-        collate_fn=custom_collate,
+        collate_fn=collate_fn,
         num_workers=0
     )
 
@@ -689,10 +755,12 @@ def main():
     else:
         L, K = all_datasets[0].L, all_datasets[0].K
 
-    print(f"\nCreating GAT-GNN model v3: L={L}, K={K}")
+    print(f"\nCreating {args.model_type.upper()} model v3: L={L}, K={K}")
     print(f"  hidden_dim={args.hidden_dim}, heads={args.num_heads}, "
           f"layers={args.num_layers}, drop={args.dropout}")
-    print(f"  Label norm: per-sample (signed-log + nonzero min-max to [-1,1])")
+    if args.model_type == 'dcgnn':
+        print(f"  Dynamic graph: top_z={args.dcgnn_top_z} dominant AP-UE edges per AP/UE")
+    print(f"  Target: per-AP WMMSE power share (share logits)")
 
     model = PowerGNN_GAT(
         L=L, K=K,
@@ -731,6 +799,8 @@ def main():
     save_interval = 50   # 每 N 轮存一次盘
 
     os.makedirs(args.output_dir, exist_ok=True)
+    best_filename = 'best_dcgnn_power.pt' if args.model_type == 'dcgnn' else 'best_gat_gnn_power.pt'
+    final_filename = 'final_dcgnn_power.pt' if args.model_type == 'dcgnn' else 'final_gat_gnn_power.pt'
 
     for epoch in range(args.epochs):
         train_loss = train_epoch(model, train_loader, optimizer, scheduler, device)
@@ -758,15 +828,17 @@ def main():
 
         # 每 N 轮存盘一次
         if (epoch + 1) % save_interval == 0:
-            model_path = os.path.join(args.output_dir, 'best_gat_gnn_power.pt')
+            model_path = os.path.join(args.output_dir, best_filename)
             torch.save({
                 'epoch': best_epoch,
                 'model_state_dict': best_state_dict,
-                'model_type': 'gat',
+                'model_type': args.model_type,
+                'dcgnn_top_z': args.dcgnn_top_z if args.model_type == 'dcgnn' else None,
                 'feature_schema': 'masked_gain_snr_csi_degree_sumgain_v2',
                 'val_mse': best_val_loss,
                 'val_corr': best_metrics.get('val_corr', 0),
-                'norm_method': 'per_sample_signedlog_minmax',
+                'norm_method': 'per_ap_wmmse_share',
+                'output_kind': 'share_logits',
                 'output_scale': model.output_scale,
                 'args': args
             }, model_path)
@@ -782,27 +854,31 @@ def main():
           f"Best val NZ_MSE: {best_metrics.get('val_nz_mse', 0):.4f}")
 
     # 最终保存最优模型
-    model_path = os.path.join(args.output_dir, 'best_gat_gnn_power.pt')
+    model_path = os.path.join(args.output_dir, best_filename)
     torch.save({
         'epoch': best_epoch,
         'model_state_dict': best_state_dict,
-        'model_type': 'gat',
+        'model_type': args.model_type,
+        'dcgnn_top_z': args.dcgnn_top_z if args.model_type == 'dcgnn' else None,
         'feature_schema': 'masked_gain_snr_csi_degree_sumgain_v2',
         'val_mse': best_val_loss,
         'val_corr': best_metrics.get('val_corr', 0),
-        'norm_method': 'per_sample_signedlog_minmax',
+        'norm_method': 'per_ap_wmmse_share',
+        'output_kind': 'share_logits',
         'output_scale': model.output_scale,
         'args': args
     }, model_path)
     print(f"Best model saved to {model_path}")
 
     # 保存最终模型
-    final_path = os.path.join(args.output_dir, 'final_gat_gnn_power.pt')
+    final_path = os.path.join(args.output_dir, final_filename)
     torch.save({
         'model_state_dict': model.state_dict(),
-        'model_type': 'gat',
+        'model_type': args.model_type,
+        'dcgnn_top_z': args.dcgnn_top_z if args.model_type == 'dcgnn' else None,
         'feature_schema': 'masked_gain_snr_csi_degree_sumgain_v2',
-        'norm_method': 'per_sample_signedlog_minmax',
+        'norm_method': 'per_ap_wmmse_share',
+        'output_kind': 'share_logits',
         'output_scale': model.output_scale,
         'args': args
     }, final_path)

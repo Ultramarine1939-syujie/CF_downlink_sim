@@ -137,11 +137,9 @@ class GNNDataset(TorchDataset):
               f"nonzero={n_nonzero} ({n_nonzero/self.rho_raw.size*100:.1f}%)")
         print(f"  Normalization: per-sample (signed-log + nonzero min-max to [-1,1])")
 
-        # 构建固定的边索引 (基于 All 模式的完整二部图: L*K 条边)
+        # 构建固定的完整二部图边索引；DCC 服务关系由 D_mask 控制。
         # AP 索引: 0 to L-1, UE 索引: L to L+K-1
-        # 使用 All 模式的边来保证所有样本边数一致
-        D_all = self.D[:, :, 0] if self.modes[0] == 'All' else np.ones((self.L, self.K))
-        src_ap, dst_ue = np.where(D_all == 1)
+        src_ap, dst_ue = np.where(np.ones((self.L, self.K), dtype=np.float32) == 1)
         # UE 节点索引从 L 开始 (AP 节点是 0 to L-1, UE 节点是 L to L+K-1)
         dst_ue = dst_ue + self.L
         self.edge_index_fixed = np.vstack([src_ap, dst_ue])  # (2, num_edges)
@@ -163,7 +161,7 @@ class GNNDataset(TorchDataset):
             Data: PyTorch Geometric Data 对象
                 x_ap: AP 节点特征 (L, K+4) - masked sqrt(gain) + SNR/CSI/degree/gain context
                 x_ue: UE 节点特征 (K, L+4) - masked sqrt(gain) + SNR/CSI/degree/gain context
-                edge_index: 边索引 (2, num_edges) - 固定的全连接边
+                edge_index: 边索引 (2, num_edges) - 固定的完整二部图边
                 D_mask: D 矩阵掩码 (L, K) - 指示哪些边有效
                 y: 标签 rho_WMMSE (L, K)
                 esr: ESR 标签 (标量)

@@ -15,7 +15,7 @@ echo.
 echo   [1] Quick Test Mode (Recommended for first run)
 echo       - 10 snapshots/SNR, 20 epochs
 echo       - Estimated time: 10-30 minutes
-echo       - Purpose: Quick validation of GNN and Local-GNN effectiveness
+echo       - Purpose: Quick validation of GNN, DCGNN, Local-GNN, DQN, and DDPG effectiveness
 echo.
 echo   [2] Full Run Mode
 echo       - snapshots/SNR from config/getDefaultParams.m, 100 epochs
@@ -30,7 +30,7 @@ echo       - Skip data generation and model training
 echo       - Estimated time: 5-10 minutes
 echo.
 echo   [5] Smoke Tests Only (Use existing data/model)
-echo       - Validate dataset and test Python/MATLAB GNN + Local-GNN inference
+echo       - Validate dataset and test Python/MATLAB GNN + DCGNN + Local-GNN + RL inference
 echo       - Skip data generation, training, and full simulation
 echo.
 echo   [6] Redraw Figures Only (Use existing simulation results)
@@ -56,7 +56,9 @@ set GNN_EPOCHS=100
 set SKIP_DATA_GEN=0
 set SKIP_DATA_VALIDATE=0
 set SKIP_GNN_TRAIN=0
+set SKIP_DCGNN_TRAIN=0
 set SKIP_LOCAL_GNN_TRAIN=0
+set SKIP_RL_TRAIN=0
 set RUN_SIMULATION=1
 set REDRAW_FIGURES_ONLY=0
 
@@ -128,11 +130,15 @@ echo   Snapshots/SNR:  %SNAPSHOTS_PER_SNR%
 echo   Snapshots/SNR:  config default
 )
 echo   GNN epochs:     %GNN_EPOCHS%
+echo   DCGNN epochs:   %GNN_EPOCHS%
 echo   Local-GNN epochs: %GNN_EPOCHS%
+echo   DQN/DDPG epochs: %GNN_EPOCHS%
 echo   Skip data gen:  %SKIP_DATA_GEN%
 echo   Skip data val:  %SKIP_DATA_VALIDATE%
 echo   Skip GNN train: %SKIP_GNN_TRAIN%
+echo   DCGNN model:    auto-detect existing best_dcgnn_power.pt
 echo   Local model:    auto-detect existing best_local_gnn_power.pt
+echo   RL models:      auto-detect existing best_dqn_power.pt and best_ddpg_power.pt
 echo   Run simulation: %RUN_SIMULATION%
 echo   Redraw only:    %REDRAW_FIGURES_ONLY%
 echo ============================================================
@@ -201,7 +207,7 @@ if %SKIP_DATA_GEN%==1 (
 
 echo.
 echo ============================================================
-echo   [Step 1/7] Generating training dataset
+echo   [Step 1/9] Generating training dataset
 echo ============================================================
 echo.
 
@@ -232,7 +238,7 @@ if %SKIP_DATA_VALIDATE%==1 (
 
 echo.
 echo ============================================================
-echo   [Step 2/7] Validating latest training dataset
+echo   [Step 2/9] Validating latest training dataset
 echo ============================================================
 echo.
 
@@ -265,13 +271,13 @@ echo.
 :step3
 if %SKIP_GNN_TRAIN%==1 (
     echo.
-    echo [SKIP] Step 3-4: GNN training skipped
-    goto :step5
+    echo [SKIP] Step 3-6: GNN/DCGNN/RL/Local-GNN training skipped
+    goto :step7
 )
 
 echo.
 echo ============================================================
-echo   [Step 3/7] Training full-graph GNN model
+echo   [Step 3/9] Training full-graph GNN model
 echo ============================================================
 echo.
 
@@ -292,7 +298,115 @@ echo.
 :step4
 echo.
 echo ============================================================
-echo   [Step 4/7] Checking AP-local GNN model
+echo   [Step 4/9] Checking DCGNN model
+echo ============================================================
+echo.
+
+set SKIP_DCGNN_TRAIN=0
+if exist "%MODELS_DIR%\best_dcgnn_power.pt" (
+    echo Existing DCGNN model found:
+    for %%F in ("%MODELS_DIR%\best_dcgnn_power.pt") do (
+        echo   Path: %%~fF
+        echo   Size: %%~zF bytes
+        echo   Last modified: %%~tF
+    )
+    echo.
+    if /i "%~2"=="/y" (
+        echo Auto-confirm enabled: retraining DCGNN and replacing the existing model.
+    ) else (
+        set "RETRAIN_DCGNN="
+        set /p RETRAIN_DCGNN="Retrain DCGNN and replace the existing model? [y/N]: "
+        if /i not "!RETRAIN_DCGNN!"=="y" (
+            set SKIP_DCGNN_TRAIN=1
+            echo Reusing existing DCGNN model.
+        )
+    )
+)
+
+if !SKIP_DCGNN_TRAIN!==1 (
+    echo.
+    echo [SKIP] Step 4: DCGNN training skipped
+    goto :step5
+)
+
+echo.
+echo ============================================================
+echo   [Step 4/9] Training dynamically-connected DCGNN model
+echo ============================================================
+echo.
+
+cd /d "%PYTHON_DIR%"
+python train_gnn.py --data "%LATEST_DATA%" --epochs %GNN_EPOCHS% --output_dir "%MODELS_DIR%" --model_type dcgnn --dcgnn_top_z 15
+
+if %ERRORLEVEL% neq 0 (
+    echo.
+    echo [ERROR] DCGNN training failed!
+    pause
+    exit /b 1
+)
+
+echo.
+echo [OK] DCGNN training completed
+echo.
+
+:step5
+echo.
+echo ============================================================
+echo   [Step 5/9] Checking DQN/DDPG RL models
+echo ============================================================
+echo.
+
+set SKIP_RL_TRAIN=0
+if exist "%MODELS_DIR%\best_dqn_power.pt" if exist "%MODELS_DIR%\best_ddpg_power.pt" (
+    echo Existing DQN/DDPG models found:
+    for %%F in ("%MODELS_DIR%\best_dqn_power.pt" "%MODELS_DIR%\best_ddpg_power.pt") do (
+        echo   Path: %%~fF
+        echo   Size: %%~zF bytes
+        echo   Last modified: %%~tF
+    )
+    echo.
+    if /i "%~2"=="/y" (
+        echo Auto-confirm enabled: retraining DQN/DDPG and replacing the existing models.
+    ) else (
+        set "RETRAIN_RL="
+        set /p RETRAIN_RL="Retrain DQN/DDPG and replace the existing models? [y/N]: "
+        if /i not "!RETRAIN_RL!"=="y" (
+            set SKIP_RL_TRAIN=1
+            echo Reusing existing DQN/DDPG models.
+        )
+    )
+)
+
+if !SKIP_RL_TRAIN!==1 (
+    echo.
+    echo [SKIP] Step 5: DQN/DDPG training skipped
+    goto :step6
+)
+
+echo.
+echo ============================================================
+echo   [Step 5/9] Training DQN/DDPG reward-based RL models
+echo ============================================================
+echo.
+
+cd /d "%PYTHON_DIR%"
+python train_rl_power.py --data "%LATEST_DATA%" --method all --epochs %GNN_EPOCHS% --output_dir "%MODELS_DIR%"
+
+if %ERRORLEVEL% neq 0 (
+    echo.
+    echo [ERROR] DQN/DDPG training failed!
+    pause
+    exit /b 1
+)
+
+echo.
+echo [OK] DQN/DDPG training completed
+echo.
+
+:step6
+echo.
+echo ============================================================
+echo   [Step 6/9] Checking AP-local GNN model
 echo ============================================================
 echo.
 
@@ -319,13 +433,13 @@ if exist "%MODELS_DIR%\best_local_gnn_power.pt" (
 
 if !SKIP_LOCAL_GNN_TRAIN!==1 (
     echo.
-    echo [SKIP] Step 4: Local-GNN training skipped
-    goto :step5
+    echo [SKIP] Step 6: Local-GNN training skipped
+    goto :step7
 )
 
 echo.
 echo ============================================================
-echo   [Step 4/7] Training AP-local GNN model
+echo   [Step 6/9] Training AP-local GNN model
 echo ============================================================
 echo.
 
@@ -343,16 +457,16 @@ echo.
 echo [OK] Local-GNN training completed
 echo.
 
-:step5
+:step7
 echo.
 echo ============================================================
-echo   [Step 5/7] Python GNN inference smoke tests
+echo   [Step 7/9] Python GNN/RL inference smoke tests
 echo ============================================================
 echo.
 
 if exist "%MODELS_DIR%\best_gat_gnn_power.pt" (
     cd /d "%PROJECT_ROOT%"
-    python -c "import sys, numpy as np; sys.path.insert(0, r'%PYTHON_DIR%'); from inference import GNNInferrer; inf=GNNInferrer(r'%MODELS_DIR%\best_gat_gnn_power.pt'); sg=np.abs(np.random.randn(100,20)); D=np.ones((100,20)); rho=inf.infer(sg,D,0.3,10.0); assert rho.shape==(100,20); assert np.isfinite(rho).all(); assert abs(float(rho.sum())-1000.0)<1e-6; print('Python full-graph GNN smoke OK: rho sum=', float(rho.sum()))"
+    python -c "import sys, numpy as np; sys.path.insert(0, r'%PYTHON_DIR%'); import gnn_runtime; sg=np.abs(np.random.randn(100,20)).astype('float32'); D=np.ones((100,20), dtype='float32'); out=gnn_runtime.infer(r'%MODELS_DIR%\best_gat_gnn_power.pt', sg, D, 10.0, 0.3); rho=out['rho']; assert rho.shape==(100,20); assert np.isfinite(rho).all(); assert np.allclose(rho.sum(axis=1), 10.0, atol=1e-5); print('Python full-graph GNN smoke OK: rho sum=', float(rho.sum()))"
 
     if !ERRORLEVEL! neq 0 (
         echo.
@@ -362,6 +476,48 @@ if exist "%MODELS_DIR%\best_gat_gnn_power.pt" (
     )
 ) else (
     echo [WARN] best_gat_gnn_power.pt not found; full-graph GNN will fall back to EPA in MATLAB simulation.
+)
+
+if exist "%MODELS_DIR%\best_dcgnn_power.pt" (
+    cd /d "%PROJECT_ROOT%"
+    python -c "import sys, numpy as np; sys.path.insert(0, r'%PYTHON_DIR%'); import gnn_runtime; sg=np.abs(np.random.randn(100,20)).astype('float32'); D=np.ones((100,20), dtype='float32'); out=gnn_runtime.infer(r'%MODELS_DIR%\best_dcgnn_power.pt', sg, D, 10.0, 0.3); rho=out['rho']; assert rho.shape==(100,20); assert np.isfinite(rho).all(); assert np.allclose(rho.sum(axis=1), 10.0, atol=1e-5); print('Python DCGNN smoke OK: rho sum=', float(rho.sum()), 'top_z model tested')"
+
+    if !ERRORLEVEL! neq 0 (
+        echo.
+        echo [ERROR] Python DCGNN inference smoke test failed!
+        pause
+        exit /b 1
+    )
+) else (
+    echo [WARN] best_dcgnn_power.pt not found; DCGNN will fall back to EPA in MATLAB simulation.
+)
+
+if exist "%MODELS_DIR%\best_dqn_power.pt" (
+    cd /d "%PROJECT_ROOT%"
+    python -c "import sys, numpy as np; sys.path.insert(0, r'%PYTHON_DIR%'); import rl_runtime; sg=np.abs(np.random.randn(100,20)).astype('float32'); D=np.ones((100,20), dtype='float32'); out=rl_runtime.infer(r'%MODELS_DIR%\best_dqn_power.pt', sg, D, 10.0, 0.3); rho=out['rho']; assert rho.shape==(100,20); assert np.isfinite(rho).all(); assert np.allclose(rho.sum(axis=1), 10.0, atol=1e-5); print('Python DQN smoke OK: rho sum=', float(rho.sum()), 'action=', out.get('action_idx'), 'alpha=', out.get('alpha'))"
+
+    if !ERRORLEVEL! neq 0 (
+        echo.
+        echo [ERROR] Python DQN inference smoke test failed!
+        pause
+        exit /b 1
+    )
+) else (
+    echo [WARN] best_dqn_power.pt not found; DQN will fall back to EPA in MATLAB simulation.
+)
+
+if exist "%MODELS_DIR%\best_ddpg_power.pt" (
+    cd /d "%PROJECT_ROOT%"
+    python -c "import sys, numpy as np; sys.path.insert(0, r'%PYTHON_DIR%'); import rl_runtime; sg=np.abs(np.random.randn(100,20)).astype('float32'); D=np.ones((100,20), dtype='float32'); out=rl_runtime.infer(r'%MODELS_DIR%\best_ddpg_power.pt', sg, D, 10.0, 0.3); rho=out['rho']; assert rho.shape==(100,20); assert np.isfinite(rho).all(); assert np.allclose(rho.sum(axis=1), 10.0, atol=1e-5); print('Python DDPG smoke OK: rho sum=', float(rho.sum()))"
+
+    if !ERRORLEVEL! neq 0 (
+        echo.
+        echo [ERROR] Python DDPG inference smoke test failed!
+        pause
+        exit /b 1
+    )
+) else (
+    echo [WARN] best_ddpg_power.pt not found; DDPG will fall back to EPA in MATLAB simulation.
 )
 
 if exist "%MODELS_DIR%\best_local_gnn_power.pt" (
@@ -384,11 +540,11 @@ echo.
 
 echo.
 echo ============================================================
-echo   [Step 6/7] MATLAB GNN bridge smoke tests
+echo   [Step 8/9] MATLAB GNN/RL bridge smoke tests
 echo ============================================================
 echo.
 
-matlab -batch "cd('%PROJECT_ROOT%'); addpath(genpath(pwd)); D=ones(100,20); gain=abs(rand(100,20)); Hhat=zeros(100,1,20); modelPath=fullfile(pwd,'models','best_gat_gnn_power.pt'); localPath=fullfile(pwd,'models','best_local_gnn_power.pt'); [rho1,t1]=computeRhoGNN(Hhat,D,gain,10,modelPath,0.3); [rho2,t2]=computeRhoGNN(Hhat,D,gain,10,modelPath,0.3); [rhoL,tL]=computeRhoLocalGNN(Hhat,D,gain,10,localPath,0.3); assert(all(isfinite(rho1(:)))); assert(all(isfinite(rho2(:)))); assert(all(isfinite(rhoL(:)))); assert(abs(sum(rho1(:))-1000)<1e-3); assert(abs(sum(rho2(:))-1000)<1e-3); assert(abs(sum(rhoL(:))-1000)<1e-3); assert(isfield(t2,'forward_sec') && t2.forward_sec > 0); assert(isfield(tL,'forward_sec') && tL.forward_sec > 0); fprintf('MATLAB bridge smoke OK: GNN sum=%%.6f, Local-GNN sum=%%.6f, GNN forward=%%.6fs, Local forward=%%.6fs\n', sum(rho2(:)), sum(rhoL(:)), t2.forward_sec, tL.forward_sec);"
+matlab -batch "cd('%PROJECT_ROOT%'); addpath(genpath(pwd)); D=ones(100,20); gain=abs(rand(100,20)); Hhat=zeros(100,1,20); modelPath=fullfile(pwd,'models','best_gat_gnn_power.pt'); dcgnnPath=fullfile(pwd,'models','best_dcgnn_power.pt'); localPath=fullfile(pwd,'models','best_local_gnn_power.pt'); dqnPath=fullfile(pwd,'models','best_dqn_power.pt'); ddpgPath=fullfile(pwd,'models','best_ddpg_power.pt'); rhoF=computeRhoFPCP(D,gain,10,100,20,0.5); [rho1,t1]=computeRhoGNN(Hhat,D,gain,10,modelPath,0.3); [rho2,t2]=computeRhoGNN(Hhat,D,gain,10,modelPath,0.3); [rhoD,tD]=computeRhoGNN(Hhat,D,gain,10,dcgnnPath,0.3); [rhoL,tL]=computeRhoLocalGNN(Hhat,D,gain,10,localPath,0.3); [rhoQ,tQ]=computeRhoRL(Hhat,D,gain,10,dqnPath,0.3); [rhoP,tP]=computeRhoRL(Hhat,D,gain,10,ddpgPath,0.3); assert(all(isfinite(rhoF(:)))); assert(all(isfinite(rho1(:)))); assert(all(isfinite(rho2(:)))); assert(all(isfinite(rhoD(:)))); assert(all(isfinite(rhoL(:)))); assert(all(isfinite(rhoQ(:)))); assert(all(isfinite(rhoP(:)))); assert(abs(sum(rhoF(:))-1000)<1e-3); assert(abs(sum(rho1(:))-1000)<1e-3); assert(abs(sum(rho2(:))-1000)<1e-3); assert(abs(sum(rhoD(:))-1000)<1e-3); assert(abs(sum(rhoL(:))-1000)<1e-3); assert(abs(sum(rhoQ(:))-1000)<1e-3); assert(abs(sum(rhoP(:))-1000)<1e-3); assert(isfield(t2,'forward_sec') && t2.forward_sec > 0); assert(isfield(tD,'forward_sec') && tD.forward_sec > 0); assert(isfield(tL,'forward_sec') && tL.forward_sec > 0); assert(isfield(tQ,'forward_sec') && tQ.forward_sec > 0); assert(isfield(tP,'forward_sec') && tP.forward_sec > 0); fprintf('MATLAB bridge smoke OK: FPCP=%%.6f, GNN=%%.6f, DCGNN=%%.6f, Local-GNN=%%.6f, DQN=%%.6f, DDPG=%%.6f\n', sum(rhoF(:)), sum(rho2(:)), sum(rhoD(:)), sum(rhoL(:)), sum(rhoQ(:)), sum(rhoP(:)));"
 
 if %ERRORLEVEL% neq 0 (
     echo.
@@ -401,16 +557,16 @@ echo.
 echo [OK] MATLAB GNN bridge smoke tests completed
 echo.
 
-:step7
+:step9
 if %RUN_SIMULATION%==0 (
     echo.
-    echo [SKIP] Step 7: Full simulation skipped
+    echo [SKIP] Step 9: Full simulation skipped
     goto :done
 )
 
 echo.
 echo ============================================================
-echo   [Step 7/7] Running Cell-Free simulation
+echo   [Step 9/9] Running Cell-Free simulation
 echo ============================================================
 echo.
 
@@ -445,7 +601,7 @@ if not exist "%PROJECT_ROOT%main\SimulationData\Simulation_Results_v2.mat" (
 )
 
 cd /d "%PROJECT_ROOT%"
-matlab -batch "cd('%PROJECT_ROOT%'); addpath(genpath(pwd)); savePath=fullfile(pwd,'main','Imgs'); dataPath=fullfile(pwd,'main','SimulationData'); simFile=fullfile(dataPath,'Simulation_Results_v2.mat'); syncFile=fullfile(dataPath,'Sync_Ablation_Results.mat'); S=load(simFile); if isfield(S,'Perf'), Perf=S.Perf; else, Perf=[]; end; plotESRResults_v2(S.ESR_mean,S.ESR_best,S.ESR_best_algo,S.algoTable,S.SNR_dB,0,true,savePath,false,dataPath,Perf); if isfile(syncFile), A=load(syncFile); plotLatencyAblationResults(A.Ablation,savePath,true,false,dataPath); else, warning('Sync_Ablation_Results.mat not found; skipped A5/A6/A7 redraw.'); end"
+matlab -batch "cd('%PROJECT_ROOT%'); addpath(genpath(pwd)); savePath=fullfile(pwd,'main','Imgs'); dataPath=fullfile(pwd,'main','SimulationData'); simFile=fullfile(dataPath,'Simulation_Results_v2.mat'); syncFile=fullfile(dataPath,'Sync_Ablation_Results.mat'); S=load(simFile); if isfield(S,'Perf'), Perf=S.Perf; else, Perf=[]; end; plotESRResults_v2(S.ESR_mean,S.ESR_best,S.ESR_best_algo,S.algoTable,S.SNR_dB,0,true,savePath,false,dataPath,Perf); if isfile(syncFile), A=load(syncFile); plotLatencyAblationResults(A.Ablation,savePath,true,false,dataPath); else, warning('Sync_Ablation_Results.mat not found; skipped A5/A6/A7/A8/A9 redraw.'); end"
 
 if %ERRORLEVEL% neq 0 (
     echo.
@@ -477,15 +633,19 @@ if %REDRAW_FIGURES_ONLY%==1 (
     echo     - Sync ablation figures from Sync_Ablation_Results.mat when available
 ) else (
     echo   Validation criteria:
-    echo     Local-GNN enters distributed main ranking = pipeline updated
-    echo     Local-GNN ESR ^> EPA                    = strong local model
-    echo     Local-GNN ESR ~= EPA                    = model absent or undertrained
+    echo     Figures include Baseline/Random/EPA/FPCP/D-WMMSE/WMMSE/GNN/Local-GNN/DCGNN/DQN/DDPG
+    echo     Local-GNN enters distributed main ranking = distributed learning candidate active
+    echo     DCGNN appears in learning-family plots    = dynamic graph model active
+    echo     DQN/DDPG appear in learning-family plots  = RL baselines active
+    echo     Missing .pt model                         = corresponding learned method falls back to EPA
     echo.
     echo   Smoke tests completed:
     echo     - Dataset validation
     echo     - Python full-graph GNN inference
+    echo     - Python DCGNN inference when model exists
+    echo     - Python DQN/DDPG inference when models exist
     echo     - Python Local-GNN inference when model exists
-    echo     - MATLAB computeRhoGNN and computeRhoLocalGNN bridges
+    echo     - MATLAB computeRhoFPCP, computeRhoGNN, computeRhoLocalGNN, and computeRhoRL bridges
 )
 echo ============================================================
 echo.

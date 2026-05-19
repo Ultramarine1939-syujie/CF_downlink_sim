@@ -13,7 +13,7 @@ else
     distributedMask = true(1, numAlgos);
 end
 
-baselineIdx = find(contains(algoNames, 'Baseline') & contains(algoNames, 'MR') & contains(algoNames, 'All'), 1);
+baselineIdx = find(contains(algoNames, 'Baseline') & contains(algoNames, 'MR') & contains(algoNames, 'DCC'), 1);
 if isempty(baselineIdx)
     baselineIdx = find(contains(algoNames, 'Baseline'), 1);
 end

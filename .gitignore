@@ -28,6 +28,8 @@ ENV/
 dist/
 build/
 *.whl
+docs/
+docs/report
 
 # ── Jupyter ───────────────────────────────────────────────────────────────
 .ipynb_checkpoints/

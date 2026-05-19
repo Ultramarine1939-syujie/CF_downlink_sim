@@ -77,7 +77,7 @@ def validate_dataset(mat_path):
         print(f"  tau_c={tau_c}, tau_p={tau_p}")
         print(f"  SNR_dB_range: {SNR_dB_range}")
         print(f"  nSnapshotsPerSNR: {nSnapshotsPerSNR}")
-        N_snaps_expected = len(SNR_dB_range) * nSnapshotsPerSNR * 2  # All + DCC
+        N_snaps_expected = len(SNR_dB_range) * nSnapshotsPerSNR  # DCC only
 
         # Get dimensions
         sqrtGain = as_lkn(np.array(features['sqrtGain']), L, K)

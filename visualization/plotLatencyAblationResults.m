@@ -26,15 +26,19 @@ avgComputeMs = mean(Ablation.compute_delay_ms, 2, 'omitnan');
 avgBytes = mean(Ablation.sync_bytes, 2);
 avgRounds = mean(Ablation.sync_rounds, 2);
 
-paOrder = {'LocalGNN', 'GNN', 'DWMMSE', 'WMMSE', 'EPA', 'random', 'baseline'};
-paLabels = {'Local-GNN', 'GNN', 'D-WMMSE', 'WMMSE', 'EPA', 'Random', 'Baseline'};
+paOrder = {'LocalGNN', 'DCGNN', 'GNN', 'DDPG', 'DQN', 'DWMMSE', 'WMMSE', 'FPCP', 'EPA', 'random', 'baseline'};
+paLabels = {'Local-GNN', 'DCGNN', 'GNN', 'DDPG', 'DQN', 'D-WMMSE', 'WMMSE', 'FPCP', 'EPA', 'Random', 'Baseline'};
 pcOrder = {'MR', 'LMMSE', 'RMMSE', 'LMMSE_G'};
 pcLabels = {'MR', 'L-MMSE', 'R-MMSE', 'L-MMSE-G'};
 paColors = [
     0.00 0.52 0.58
+    0.10 0.35 0.95
     0.45 0.00 0.75
+    0.80 0.25 0.65
+    0.35 0.45 0.90
     0.95 0.55 0.10
     0.85 0.15 0.15
+    0.10 0.55 0.25
     0.00 0.60 0.00
     0.55 0.55 0.55
     0.20 0.20 0.20
@@ -61,10 +65,10 @@ bestComputeByPA = nan(numel(paOrder), 1);
 bestControlByPA = nan(numel(paOrder), 1);
 bestLabelByPA = strings(numel(paOrder), 1);
 for pi = 1:numel(paOrder)
-    idxAll = find(paFocusMask & strcmp(algoPAs, paOrder{pi}));
-    if isempty(idxAll); continue; end
-    [~, bestLocal] = max(avgESR(idxAll));
-    bestIdx = idxAll(bestLocal);
+    idxCandidates = find(paFocusMask & strcmp(algoPAs, paOrder{pi}));
+    if isempty(idxCandidates); continue; end
+    [~, bestLocal] = max(avgESR(idxCandidates));
+    bestIdx = idxCandidates(bestLocal);
     bestIdxByPA(pi) = bestIdx;
     bestESRByPA(pi) = avgESR(bestIdx);
     bestDelayByPA(pi) = avgSyncMs(bestIdx);
@@ -120,7 +124,7 @@ set(gca, 'XTick', 1:numel(pcOrder), 'XTickLabel', pcLabels, ...
     'YTick', 1:numel(paOrder), 'YTickLabel', paLabels, 'FontSize', 12);
 xlabel('Precoding method');
 ylabel('Power allocation method');
-title({'PA x PC Synchronization Delay Ablation (DCC preferred)', ...
+title({'PA x PC Synchronization Delay Ablation (DCC)', ...
     'Cell text = modeled sync delay in ms; color = logarithmic delay scale'});
 for pi = 1:numel(paOrder)
     for ci = 1:numel(pcOrder)
@@ -202,6 +206,41 @@ title('PA Ablation under L-MMSE Precoding: Delay vs ESR');
 grid on; box on;
 saveFigure(fig4, savePath, isSaveFig, 'FigA8_LMMSE_PA_Latency_Ablation');
 
+%% Fig A9: Fixed MR, PA ablation
+fig5 = figure('Visible', 'off', 'Position', [100 100 980 520]);
+fixedPC = 'MR';
+barDelay = nan(1, numel(paOrder));
+lineESR = nan(1, numel(paOrder));
+for pi = 1:numel(paOrder)
+    idx = find(strcmp(algoPAs, paOrder{pi}) & strcmp(algoPCs, fixedPC) & strcmp(algoModes, 'DCC'), 1);
+    if isempty(idx)
+        idx = find(strcmp(algoPAs, paOrder{pi}) & strcmp(algoPCs, fixedPC), 1);
+    end
+    if ~isempty(idx)
+        barDelay(pi) = avgSyncMs(idx);
+        lineESR(pi) = avgESR(idx);
+    end
+end
+leftColor = [0.00 0.45 0.74];
+rightColor = [0.85 0.33 0.10];
+set(gca, 'YColor', leftColor);
+yyaxis left;
+b = bar(1:numel(paOrder), barDelay, 0.58);
+b.FaceColor = leftColor;
+b.EdgeColor = [0.10 0.25 0.40];
+ylabel('Sync delay (ms)');
+yyaxis right;
+plotSmoothCurve(1:numel(paOrder), lineESR, rightColor);
+ylabel('Average ESR (bit/s/Hz)');
+set(gca, 'XTick', 1:numel(paOrder), 'XTickLabel', paLabels, 'FontSize', 12);
+ax5 = gca;
+ax5.YAxis(1).Color = leftColor;
+ax5.YAxis(2).Color = rightColor;
+xlabel('Power allocation method');
+title('PA Ablation under MR Precoding: Delay vs ESR');
+grid on; box on;
+saveFigure(fig5, savePath, isSaveFig, 'FigA9_MR_PA_Latency_Ablation');
+
 %% Save data table
 if isSaveData
     T = table((1:numel(algoTable)).', algoNames, algoPAs, algoPCs, algoModes, ...
@@ -216,7 +255,7 @@ if isSaveData
         fullfile(dataPath, 'Sync_Ablation_Table.csv'));
 end
 
-fprintf('[INFO] 4 synchronization ablation figures generated successfully.\n');
+fprintf('[INFO] 5 synchronization ablation figures generated successfully.\n');
 end
 
 function label = displayPC(pcKey)

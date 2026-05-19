@@ -41,7 +41,8 @@ function [rho, timing] = computeRhoGNN(~, D, gainOverNoise, Pt, gnnModelPath, si
 
     result = cached_runtime.infer(gnnModelPath, sqrtGain, D, Pt, sigma_e);
     rho_np = result{'rho'};
-    rho_flat = double(py.array.array('d', py.numpy.nditer(rho_np)));
+    rho_np = py.numpy.ascontiguousarray(rho_np);
+    rho_flat = double(py.array.array('d', py.numpy.ravel(rho_np, pyargs('order', 'C'))));
     rho = reshape(rho_flat, [K, L]).';
 
     timing.load_sec = pyFloat(result, 'load_sec');

@@ -25,9 +25,21 @@ class _Runtime:
     model_type: str
     L: int
     K: int
+    dcgnn_top_z: int | None = None
 
 
 _CACHE: Dict[Tuple[str, int, int], _Runtime] = {}
+
+
+def _ckpt_arg(checkpoint, name, default):
+    if not isinstance(checkpoint, dict):
+        return default
+    if name in checkpoint:
+        return checkpoint[name]
+    args = checkpoint.get("args")
+    if isinstance(args, dict):
+        return args.get(name, default)
+    return getattr(args, name, default)
 
 
 def _load_runtime(model_path: str, L: int, K: int) -> _Runtime:
@@ -38,21 +50,34 @@ def _load_runtime(model_path: str, L: int, K: int) -> _Runtime:
 
     checkpoint = torch.load(model_path, map_location="cpu", weights_only=False)
     model_type = checkpoint.get("model_type", "gat") if isinstance(checkpoint, dict) else "gat"
+    output_kind = checkpoint.get("output_kind", "norm_tanh") if isinstance(checkpoint, dict) else "norm_tanh"
     state = checkpoint.get("model_state_dict", checkpoint) if isinstance(checkpoint, dict) else checkpoint
 
     if model_type == "mlp":
         model = PowerGNN_MLP(
-            L=L, K=K, hidden_dim=128, num_layers=3, dropout=0.1, output_scale=1.0
+            L=L, K=K,
+            hidden_dim=int(_ckpt_arg(checkpoint, "hidden_dim", 128)),
+            num_layers=int(_ckpt_arg(checkpoint, "num_layers", 3)),
+            dropout=float(_ckpt_arg(checkpoint, "dropout", 0.1)),
+            output_scale=1.0, output_kind=output_kind
         )
     else:
         model = PowerGNN_GAT(
-            L=L, K=K, hidden_dim=128, num_heads=4, num_layers=3,
-            dropout=0.1, output_scale=1.0
+            L=L, K=K,
+            hidden_dim=int(_ckpt_arg(checkpoint, "hidden_dim", 128)),
+            num_heads=int(_ckpt_arg(checkpoint, "num_heads", 4)),
+            num_layers=int(_ckpt_arg(checkpoint, "num_layers", 3)),
+            dropout=float(_ckpt_arg(checkpoint, "dropout", 0.1)),
+            output_scale=1.0, output_kind=output_kind
         )
     model.load_state_dict(state)
     model.eval()
 
-    runtime = _Runtime(model=model, model_type=model_type, L=L, K=K)
+    dcgnn_top_z = None
+    if isinstance(checkpoint, dict) and model_type == "dcgnn":
+        dcgnn_top_z = int(checkpoint.get("dcgnn_top_z") or 15)
+
+    runtime = _Runtime(model=model, model_type=model_type, L=L, K=K, dcgnn_top_z=dcgnn_top_z)
     _CACHE[key] = runtime
     return runtime
 
@@ -113,7 +138,7 @@ def infer(model_path, sqrt_gain, D_mask, Pt=1.0, sigma_e=0.3):
         "y": torch.zeros(L, K, dtype=torch.float32),
         "esr": z,
         "snr": z,
-        "mode": "All",
+        "mode": "DCC",
         "idx": 0,
     }
     feature_sec = time.perf_counter() - feature_t0
@@ -121,6 +146,8 @@ def infer(model_path, sqrt_gain, D_mask, Pt=1.0, sigma_e=0.3):
     collate_t0 = time.perf_counter()
     if runtime.model_type == "mlp":
         batch = custom_collate_mlp([sample])
+    elif runtime.model_type == "dcgnn":
+        batch = custom_collate([sample], dynamic_top_z=runtime.dcgnn_top_z)
     else:
         batch = custom_collate([sample])
     collate_sec = time.perf_counter() - collate_t0
@@ -131,10 +158,16 @@ def infer(model_path, sqrt_gain, D_mask, Pt=1.0, sigma_e=0.3):
     forward_sec = time.perf_counter() - forward_t0
 
     post_t0 = time.perf_counter()
-    weights = np.maximum((rho_pred + 1.0) / 2.0, 0.0) * D
-    row_sum = weights.sum(axis=1, keepdims=True)
     served_count = np.maximum(D.sum(axis=1, keepdims=True), 1.0)
     fallback = Pt * D / served_count
+    if getattr(runtime.model, "output_kind", "norm_tanh") == "share_logits":
+        logits = rho_pred.copy()
+        logits[D <= 0.5] = -1.0e9
+        logits = logits - np.max(logits, axis=1, keepdims=True)
+        weights = np.exp(logits) * D
+    else:
+        weights = np.maximum((rho_pred + 1.0) / 2.0, 0.0) * D
+    row_sum = weights.sum(axis=1, keepdims=True)
     rho = np.where(row_sum > 0, Pt * weights / np.maximum(row_sum, 1e-12), fallback)
     rho = rho.astype(np.float64, copy=False)
     post_sec = time.perf_counter() - post_t0

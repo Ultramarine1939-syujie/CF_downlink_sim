@@ -57,6 +57,9 @@ savePath = fullfile(scriptDir, params.output.savePath);
 dataPath = fullfile(scriptDir, params.output.dataPath);
 gnnLocalModelPath = fullfile(rootDir, params.gnn.fullModelFile);
 localGnnModelPath = fullfile(rootDir, params.gnn.localModelFile);
+dcgnnModelPath = fullfile(rootDir, params.gnn.dcgnnModelFile);
+dqnModelPath = fullfile(rootDir, params.rl.dqnModelFile);
+ddpgModelPath = fullfile(rootDir, params.rl.ddpgModelFile);
 
 % 消融实验模型路径
 gnnAblationDir = fullfile(rootDir, 'models', 'ablation');
@@ -64,8 +67,8 @@ gnnMLPModelPath = fullfile(gnnAblationDir, 'mlp_only', 'best_model.pt');
 gnnGlobalNormModelPath = fullfile(gnnAblationDir, 'global_norm', 'best_model.pt');
 
 % 所有 GNN 模型路径 (用于缓存有效性检测)
-allModelPaths = {gnnLocalModelPath, localGnnModelPath, gnnMLPModelPath, gnnGlobalNormModelPath};
-allModelNames = {'gnnLocalModelPath', 'localGnnModelPath', 'gnnMLPModelPath', 'gnnGlobalNormModelPath'};
+allModelPaths = {gnnLocalModelPath, localGnnModelPath, dcgnnModelPath, dqnModelPath, ddpgModelPath, gnnMLPModelPath, gnnGlobalNormModelPath};
+allModelNames = {'gnnLocalModelPath', 'localGnnModelPath', 'dcgnnModelPath', 'dqnModelPath', 'ddpgModelPath', 'gnnMLPModelPath', 'gnnGlobalNormModelPath'};
 
 if ~exist(savePath, 'dir'); mkdir(savePath); end
 if ~exist(dataPath, 'dir'); mkdir(dataPath); end
@@ -84,10 +87,14 @@ PA = struct();
 PA.baseline.name = 'Baseline';       PA.baseline.fcn = @computeRhoDist;              PA.baseline.arch = 'distributed';
 PA.random.name   = 'Random';         PA.random.fcn   = [];                           PA.random.arch   = 'distributed';
 PA.EPA.name      = 'EPA';            PA.EPA.fcn      = @computeRhoEPA;               PA.EPA.arch      = 'distributed';
+PA.FPCP.name     = 'FPCP';           PA.FPCP.fcn     = @computeRhoFPCP;              PA.FPCP.arch     = 'distributed';
 PA.DWMMSE.name   = 'D-WMMSE';        PA.DWMMSE.fcn   = @computeRhoDistributedWMMSE;  PA.DWMMSE.arch   = 'distributed';
 PA.WMMSE.name    = 'WMMSE';          PA.WMMSE.fcn    = @computeRhoWMMSE;             PA.WMMSE.arch    = 'centralized_reference';
 PA.GNN.name      = 'GNN';            PA.GNN.fcn      = @computeRhoGNN;               PA.GNN.arch      = 'low_latency_centralized';
 PA.LocalGNN.name = 'Local-GNN';      PA.LocalGNN.fcn = @computeRhoLocalGNN;          PA.LocalGNN.arch = 'distributed';
+PA.DCGNN.name    = 'DCGNN';          PA.DCGNN.fcn    = @computeRhoGNN;               PA.DCGNN.arch    = 'low_latency_centralized';
+PA.DQN.name      = 'DQN';            PA.DQN.fcn      = @computeRhoRL;                PA.DQN.arch      = 'low_latency_centralized';
+PA.DDPG.name     = 'DDPG';           PA.DDPG.fcn     = @computeRhoRL;                PA.DDPG.arch     = 'low_latency_centralized';
 
 % 预编码方法 (Precoding)
 PC = struct();
@@ -109,10 +116,10 @@ AP_MODE = params.simulation.accessModes;
 % Stage 划分: 传统/参考方法索引 vs GNN 索引
 paList = fieldnames(PA);
 pcList = fieldnames(PC);
-numPA_trad = 5;   % baseline, random, EPA, D-WMMSE, WMMSE
-numPA_gnn  = numel(paList) - numPA_trad;  % GNN / Local-GNN family
+numPA_trad = 6;   % baseline, random, EPA, FPCP, D-WMMSE, WMMSE
+numPA_gnn  = numel(paList) - numPA_trad;  % learning/reference family: GNN / Local-GNN / DCGNN / DQN / DDPG
 numPC = length(pcList);  % 4
-numMode = length(AP_MODE);       % 2
+numMode = length(AP_MODE);
 
 %% ================= 构建算法组合表 =================
 algoTable = struct('id',{},'pa',{},'pc',{},'mode',{},'name',{}, ...
@@ -156,7 +163,7 @@ fprintf('  Channel: tau_c=%d  tau_p=%d  ASD=%.0f deg\n', tau_c, tau_p, rad2deg(A
 fprintf('  CSI Error: sigma_e=%.2f  nIter=%d\n', sigma_e, nIter);
 fprintf('  SNR: %s dB\n', mat2str(SNR_dB));
 fprintf('  Scenarios: %d x %d realizations\n', numScenarios, nbrOfRealizations);
-fprintf('  Algorithms: %d  (Trad: %d, GNN: %d)\n', numAlgos, numPA_trad*numPC*numMode, numPA_gnn*numPC*numMode);
+fprintf('  Algorithms: %d  (Trad: %d, Learning/ref: %d)\n', numAlgos, numPA_trad*numPC*numMode, numPA_gnn*numPC*numMode);
 fprintf('  Stage: %d  |  Cache: %s\n', runStage, mat2str(useCache));
 fprintf('  Output: fig=%s  data=%s\n', mat2str(isSaveFig), mat2str(isSaveData));
 fprintf('  Sync ablation: %s  |  RTT=%.3f ms  fronthaul=%.0f Mbps\n', ...
@@ -180,12 +187,36 @@ if (runStage == 2 || runStage == 3) && isfile(localGnnModelPath)
         warning('Local-GNN warm-up failed; timed inference may include Python initialization. Reason: %s', ME.message);
     end
 end
+if (runStage == 2 || runStage == 3) && isfile(dcgnnModelPath)
+    try
+        fprintf('  Warming up DCGNN runtime (excluded from timing metrics)...\n');
+        computeRhoGNN([], ones(L, K), ones(L, K), 10^(SNR_dB(1)/10), dcgnnModelPath, sigma_e);
+    catch ME
+        warning('DCGNN warm-up failed; timed inference may include Python initialization. Reason: %s', ME.message);
+    end
+end
+if (runStage == 2 || runStage == 3) && isfile(dqnModelPath)
+    try
+        fprintf('  Warming up DQN runtime (excluded from timing metrics)...\n');
+        computeRhoRL([], ones(L, K), ones(L, K), 10^(SNR_dB(1)/10), dqnModelPath, sigma_e);
+    catch ME
+        warning('DQN warm-up failed; timed inference may include Python initialization. Reason: %s', ME.message);
+    end
+end
+if (runStage == 2 || runStage == 3) && isfile(ddpgModelPath)
+    try
+        fprintf('  Warming up DDPG runtime (excluded from timing metrics)...\n');
+        computeRhoRL([], ones(L, K), ones(L, K), 10^(SNR_dB(1)/10), ddpgModelPath, sigma_e);
+    catch ME
+        warning('DDPG warm-up failed; timed inference may include Python initialization. Reason: %s', ME.message);
+    end
+end
 
 ESR_acc = zeros(numAlgos, num_snr);
 ESR_best = -inf(1, num_snr);
 ESR_best_algo = strings(1, num_snr);
 Perf = struct();
-Perf.methodNames = {'Baseline', 'D-WMMSE', 'WMMSE', 'GNN', 'Local-GNN'};
+Perf.methodNames = {'Baseline', 'FPCP', 'D-WMMSE', 'WMMSE', 'GNN', 'Local-GNN', 'DCGNN', 'DQN', 'DDPG'};
 Perf.modeNames = AP_MODE;
 Perf.SNR_dB = SNR_dB;
 Perf.time_pa_sec = zeros(numel(Perf.methodNames), num_snr, numMode);
@@ -201,15 +232,28 @@ if isfile(localGnnModelPath)
     d1 = dir(localGnnModelPath);
     Perf.modelBytes_LocalGNN = double(d1.bytes);
 end
-
-D_all = ones(L, K);
+Perf.modelBytes_DCGNN = 0;
+if isfile(dcgnnModelPath)
+    d1 = dir(dcgnnModelPath);
+    Perf.modelBytes_DCGNN = double(d1.bytes);
+end
+Perf.modelBytes_DQN = 0;
+if isfile(dqnModelPath)
+    d1 = dir(dqnModelPath);
+    Perf.modelBytes_DQN = double(d1.bytes);
+end
+Perf.modelBytes_DDPG = 0;
+if isfile(ddpgModelPath)
+    d1 = dir(ddpgModelPath);
+    Perf.modelBytes_DDPG = double(d1.bytes);
+end
 
 % 计算参数指纹 (缓存有效性判定)
 scenarioFP = buildParamFingerprint(L, K, N, tau_p, tau_c, ASD_varphi, ASD_theta, ...
     nbrOfRealizations, sigma_e, p, nIter, NaN);
 snrFPs = buildSNRFingerprints(L, K, N, tau_p, tau_c, ASD_varphi, ASD_theta, ...
     nbrOfRealizations, sigma_e, p, nIter, SNR_dB);
-snrCacheVersion = '_v11_simplified_local_gnn';
+snrCacheVersion = '_v17_gnn_share_logits';
 for fpIdx = 1:numel(snrFPs)
     snrFPs(fpIdx).fp = [snrFPs(fpIdx).fp snrCacheVersion];
 end
@@ -340,8 +384,8 @@ for s = 1:numScenarios
         % 需要重新计算stage1时, 先构建 V_cache 和 pa_rhos_trad
         if (runStage == 1 || runStage == 3) && ~stage1_ok
             % ========== Stage 1: 传统方法 ==========
-            V_cache_all = struct();  % V_cache_all.All.MR.V, V_cache_all.DCC.LMMSE.scaling, ...
-            pa_rhos_all = struct();  % pa_rhos_all.All.baseline, pa_rhos_all.DCC.WMMSE, ...
+            V_cache_all = struct();  % V_cache_all.DCC.MR.V, V_cache_all.DCC.LMMSE.scaling, ...
+            pa_rhos_all = struct();  % pa_rhos_all.DCC.baseline, pa_rhos_all.DCC.WMMSE, ...
             ESR_cell_all = cell(numMode, numPC, numPA_trad);  % (mode, pc, pa_trad)
 
             time_sec_s1 = zeros(numel(Perf.methodNames), numMode);
@@ -350,8 +394,7 @@ for s = 1:numScenarios
 
             for mi = 1:numMode
                 modeName = AP_MODE{mi};
-                D = D_all;
-                if strcmp(modeName, 'DCC'); D = D_dcc; end
+                D = D_dcc;
 
                 if VERBOSE; fprintf('  |   |  [%s] Precoding...', modeName); end
 
@@ -381,6 +424,10 @@ for s = 1:numScenarios
 
                 rho_EPA = computeRhoEPA(D, Pt, L, K);
 
+                rho_FPCP_t = tic;
+                rho_FPCP = computeRhoFPCP(D, gainOverNoise, Pt, L, K, params.fpcp.alpha);
+                rho_FPCP_sec = toc(rho_FPCP_t);
+
                 rho_DWMMSE_t = tic;
                 [rho_DWMMSE, dWMMSE_info] = computeRhoDistributedWMMSE(D, gainOverNoise, Pt, L, K, ...
                     syncAblation.dwmmseRounds, params.dwmmse.damping);
@@ -397,20 +444,27 @@ for s = 1:numScenarios
                 pa_rhos_mode = struct();
                 pa_rhos_mode.baseline = rho_baseline;
                 pa_rhos_mode.EPA      = rho_EPA;
+                pa_rhos_mode.FPCP     = rho_FPCP;
                 pa_rhos_mode.DWMMSE   = rho_DWMMSE;
                 pa_rhos_mode.WMMSE    = rho_WMMSE;
                 pa_rhos_mode.random   = rho_Random;
                 pa_rhos_all.(modeName) = pa_rhos_mode;
 
                 % 性能统计
-                idxBL = 1; idxDW = 2; idxW = 3;
+                idxBL = find(strcmp(Perf.methodNames, 'Baseline'), 1);
+                idxFP = find(strcmp(Perf.methodNames, 'FPCP'), 1);
+                idxDW = find(strcmp(Perf.methodNames, 'D-WMMSE'), 1);
+                idxW = find(strcmp(Perf.methodNames, 'WMMSE'), 1);
                 time_sec_s1(idxBL, mi) = rho_baseline_sec;
+                time_sec_s1(idxFP, mi) = rho_FPCP_sec;
                 time_sec_s1(idxDW, mi) = rho_DWMMSE_sec;
                 time_sec_s1(idxW, mi) = rho_WMMSE_sec;
                 time_core_s1(idxBL, mi) = rho_baseline_sec;
+                time_core_s1(idxFP, mi) = rho_FPCP_sec;
                 time_core_s1(idxDW, mi) = rho_DWMMSE_sec;
                 time_core_s1(idxW, mi) = rho_WMMSE_sec;
                 comm_bytes_s1(idxBL, mi) = 0;
+                comm_bytes_s1(idxFP, mi) = 0;
                 comm_bytes_s1(idxDW, mi) = dWMMSE_info.messageBytes;
                 comm_bytes_s1(idxW, mi) = double(numel(Hhat) * 16);
 
@@ -423,8 +477,8 @@ for s = 1:numScenarios
                     V_cells{ci} = V_cache_mode.(pcName).V;
                     sc_cells{ci} = V_cache_mode.(pcName).scaling;
                 end
-                % Must match paList order: baseline, random, EPA, D-WMMSE, WMMSE.
-                pa_trad_rhos = {rho_baseline, rho_Random, rho_EPA, rho_DWMMSE, rho_WMMSE};
+                % Must match paList order: baseline, random, EPA, FPCP, D-WMMSE, WMMSE.
+                pa_trad_rhos = {rho_baseline, rho_Random, rho_EPA, rho_FPCP, rho_DWMMSE, rho_WMMSE};
                 ESR_cell_mode = cell(numPC, numPA_trad);
                 parfor ci = 1:numPC
                     pcName = pcList{ci};
@@ -469,9 +523,9 @@ for s = 1:numScenarios
                 end
             end
 
-            Perf.time_pa_sec(1:3, snr_idx, :) = time_sec_s1(1:3, :);
-            Perf.time_core_sec(1:3, snr_idx, :) = time_core_s1(1:3, :);
-            Perf.comm_bytes(1:3, snr_idx, :) = comm_bytes_s1(1:3, :);
+            Perf.time_pa_sec(:, snr_idx, :) = time_sec_s1;
+            Perf.time_core_sec(:, snr_idx, :) = time_core_s1;
+            Perf.comm_bytes(:, snr_idx, :) = comm_bytes_s1;
 
             % 保存 stage1 到 SNR 缓存
             if useCache
@@ -533,8 +587,7 @@ for s = 1:numScenarios
 
                 for mi = 1:numMode
                     modeName = AP_MODE{mi};
-                    D = D_all;
-                    if strcmp(modeName, 'DCC'); D = D_dcc; end
+                    D = D_dcc;
 
                     V_cache_mode = V_cache_all.(modeName);
                     % 回退 rho 用于 GNN 模型缺失时
@@ -577,6 +630,50 @@ for s = 1:numScenarios
                     end
 
                     % 消融模型
+                    % Dynamically-connected GNN candidate
+                    rho_DCGNN_sec = nan;
+                    rho_DCGNN_core_sec = nan;
+                    try
+                        rho_DCGNN_t = tic;
+                        [rho_DCGNN, rho_DCGNN_timing] = computeRhoGNN(Hhat, D, gainOverNoise, Pt, dcgnnModelPath, sigma_e);
+                        rho_DCGNN_sec = toc(rho_DCGNN_t);
+                        rho_DCGNN_core_sec = rho_DCGNN_timing.forward_sec;
+                    catch ME
+                        warning('DCGNN inference failed for %s at SNR %.0f dB; falling back to EPA. Reason: %s', ...
+                            modeName, SNR_dB(snr_idx), ME.message);
+                        rho_DCGNN = rho_fallback;
+                        rho_DCGNN_core_sec = rho_DCGNN_sec;
+                    end
+
+                    % DQN and DDPG RL baselines (one-step reward-trained policies)
+                    rho_DQN_sec = nan;
+                    rho_DQN_core_sec = nan;
+                    try
+                        rho_DQN_t = tic;
+                        [rho_DQN, rho_DQN_timing] = computeRhoRL(Hhat, D, gainOverNoise, Pt, dqnModelPath, sigma_e);
+                        rho_DQN_sec = toc(rho_DQN_t);
+                        rho_DQN_core_sec = rho_DQN_timing.forward_sec;
+                    catch ME
+                        warning('DQN inference failed for %s at SNR %.0f dB; falling back to EPA. Reason: %s', ...
+                            modeName, SNR_dB(snr_idx), ME.message);
+                        rho_DQN = rho_fallback;
+                        rho_DQN_core_sec = rho_DQN_sec;
+                    end
+
+                    rho_DDPG_sec = nan;
+                    rho_DDPG_core_sec = nan;
+                    try
+                        rho_DDPG_t = tic;
+                        [rho_DDPG, rho_DDPG_timing] = computeRhoRL(Hhat, D, gainOverNoise, Pt, ddpgModelPath, sigma_e);
+                        rho_DDPG_sec = toc(rho_DDPG_t);
+                        rho_DDPG_core_sec = rho_DDPG_timing.forward_sec;
+                    catch ME
+                        warning('DDPG inference failed for %s at SNR %.0f dB; falling back to EPA. Reason: %s', ...
+                            modeName, SNR_dB(snr_idx), ME.message);
+                        rho_DDPG = rho_fallback;
+                        rho_DDPG_core_sec = rho_DDPG_sec;
+                    end
+
                     rho_GNNMLP = rho_fallback;
                     rho_GNNGN = rho_fallback;
                     if isfile(gnnMLPModelPath)
@@ -595,6 +692,9 @@ for s = 1:numScenarios
                     pa_rhos_gnn_mode = struct();
                     pa_rhos_gnn_mode.GNN    = rho_GNN;
                     pa_rhos_gnn_mode.LocalGNN = rho_LocalGNN;
+                    pa_rhos_gnn_mode.DCGNN = rho_DCGNN;
+                    pa_rhos_gnn_mode.DQN = rho_DQN;
+                    pa_rhos_gnn_mode.DDPG = rho_DDPG;
                     pa_rhos_gnn_mode.GNNMLP = rho_GNNMLP;
                     pa_rhos_gnn_mode.GNNGN  = rho_GNNGN;
                     pa_rhos_gnn_all.(modeName) = pa_rhos_gnn_mode;
@@ -610,6 +710,18 @@ for s = 1:numScenarios
                                 if isfinite(rho_LocalGNN_sec); time_sec_s2(pi, mi) = rho_LocalGNN_sec; end
                                 if isfinite(rho_LocalGNN_core_sec); time_core_s2(pi, mi) = rho_LocalGNN_core_sec; end
                                 comm_bytes_s2(pi, mi) = 0;
+                            case 'DCGNN'
+                                if isfinite(rho_DCGNN_sec); time_sec_s2(pi, mi) = rho_DCGNN_sec; end
+                                if isfinite(rho_DCGNN_core_sec); time_core_s2(pi, mi) = rho_DCGNN_core_sec; end
+                                comm_bytes_s2(pi, mi) = featBytes;
+                            case 'DQN'
+                                if isfinite(rho_DQN_sec); time_sec_s2(pi, mi) = rho_DQN_sec; end
+                                if isfinite(rho_DQN_core_sec); time_core_s2(pi, mi) = rho_DQN_core_sec; end
+                                comm_bytes_s2(pi, mi) = featBytes;
+                            case 'DDPG'
+                                if isfinite(rho_DDPG_sec); time_sec_s2(pi, mi) = rho_DDPG_sec; end
+                                if isfinite(rho_DDPG_core_sec); time_core_s2(pi, mi) = rho_DDPG_core_sec; end
+                                comm_bytes_s2(pi, mi) = featBytes;
                         end
                     end
 
@@ -629,6 +741,12 @@ for s = 1:numScenarios
                                 gnn_rhos{pi} = rho_GNN;
                             case 'LocalGNN'
                                 gnn_rhos{pi} = rho_LocalGNN;
+                            case 'DCGNN'
+                                gnn_rhos{pi} = rho_DCGNN;
+                            case 'DQN'
+                                gnn_rhos{pi} = rho_DQN;
+                            case 'DDPG'
+                                gnn_rhos{pi} = rho_DDPG;
                             otherwise
                                 gnn_rhos{pi} = rho_fallback;
                         end
@@ -683,6 +801,12 @@ for s = 1:numScenarios
                             methodName = 'GNN';
                         case 'LocalGNN'
                             methodName = 'Local-GNN';
+                        case 'DCGNN'
+                            methodName = 'DCGNN';
+                        case 'DQN'
+                            methodName = 'DQN';
+                        case 'DDPG'
+                            methodName = 'DDPG';
                         otherwise
                             methodName = '';
                     end
@@ -884,10 +1008,7 @@ function Ablation = buildSyncAblationMetrics(ESR_mean, algoTable, SNR_dB, Perf, 
 
     avgESR = mean(ESR_mean, 2);
     for ai = 1:numAlgos
-        payloadRatio = 1;
-        if strcmp(algoTable(ai).mode, 'DCC')
-            payloadRatio = cfg.dccPayloadRatio;
-        end
+        payloadRatio = cfg.dccPayloadRatio;
 
         [pcRounds, pcBytes] = estimatePCSync(algoTable(ai).pc, L, K, N, ...
             nbrOfRealizations, nIter, payloadRatio);
@@ -977,6 +1098,8 @@ function delayMs = lookupComputeDelayMs(paName, modeName, snrIdx, Perf)
     switch paName
         case 'baseline'
             methodName = 'Baseline';
+        case 'FPCP'
+            methodName = 'FPCP';
         case 'DWMMSE'
             methodName = 'D-WMMSE';
         case 'WMMSE'
@@ -985,6 +1108,12 @@ function delayMs = lookupComputeDelayMs(paName, modeName, snrIdx, Perf)
             methodName = 'GNN';
         case 'LocalGNN'
             methodName = 'Local-GNN';
+        case 'DCGNN'
+            methodName = 'DCGNN';
+        case 'DQN'
+            methodName = 'DQN';
+        case 'DDPG'
+            methodName = 'DDPG';
         case {'EPA', 'random'}
             delayMs = 0;
             return;
