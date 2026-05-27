@@ -58,6 +58,7 @@ dataPath = fullfile(scriptDir, params.output.dataPath);
 gnnLocalModelPath = fullfile(rootDir, params.gnn.fullModelFile);
 localGnnModelPath = fullfile(rootDir, params.gnn.localModelFile);
 dcgnnModelPath = fullfile(rootDir, params.gnn.dcgnnModelFile);
+ugnnModelPath = fullfile(rootDir, params.gnn.ugnnModelFile);
 dqnModelPath = fullfile(rootDir, params.rl.dqnModelFile);
 ddpgModelPath = fullfile(rootDir, params.rl.ddpgModelFile);
 
@@ -67,8 +68,8 @@ gnnMLPModelPath = fullfile(gnnAblationDir, 'mlp_only', 'best_model.pt');
 gnnGlobalNormModelPath = fullfile(gnnAblationDir, 'global_norm', 'best_model.pt');
 
 % 所有 GNN 模型路径 (用于缓存有效性检测)
-allModelPaths = {gnnLocalModelPath, localGnnModelPath, dcgnnModelPath, dqnModelPath, ddpgModelPath, gnnMLPModelPath, gnnGlobalNormModelPath};
-allModelNames = {'gnnLocalModelPath', 'localGnnModelPath', 'dcgnnModelPath', 'dqnModelPath', 'ddpgModelPath', 'gnnMLPModelPath', 'gnnGlobalNormModelPath'};
+allModelPaths = {gnnLocalModelPath, localGnnModelPath, dcgnnModelPath, ugnnModelPath, dqnModelPath, ddpgModelPath, gnnMLPModelPath, gnnGlobalNormModelPath};
+allModelNames = {'gnnLocalModelPath', 'localGnnModelPath', 'dcgnnModelPath', 'ugnnModelPath', 'dqnModelPath', 'ddpgModelPath', 'gnnMLPModelPath', 'gnnGlobalNormModelPath'};
 
 if ~exist(savePath, 'dir'); mkdir(savePath); end
 if ~exist(dataPath, 'dir'); mkdir(dataPath); end
@@ -93,6 +94,7 @@ PA.WMMSE.name    = 'WMMSE';          PA.WMMSE.fcn    = @computeRhoWMMSE;        
 PA.GNN.name      = 'GNN';            PA.GNN.fcn      = @computeRhoGNN;               PA.GNN.arch      = 'low_latency_centralized';
 PA.LocalGNN.name = 'Local-GNN';      PA.LocalGNN.fcn = @computeRhoLocalGNN;          PA.LocalGNN.arch = 'distributed';
 PA.DCGNN.name    = 'DCGNN';          PA.DCGNN.fcn    = @computeRhoGNN;               PA.DCGNN.arch    = 'low_latency_centralized';
+PA.UGNN.name     = 'U-GNN';          PA.UGNN.fcn     = @computeRhoUGNN;              PA.UGNN.arch     = 'low_latency_centralized';
 PA.DQN.name      = 'DQN';            PA.DQN.fcn      = @computeRhoRL;                PA.DQN.arch      = 'low_latency_centralized';
 PA.DDPG.name     = 'DDPG';           PA.DDPG.fcn     = @computeRhoRL;                PA.DDPG.arch     = 'low_latency_centralized';
 
@@ -117,7 +119,7 @@ AP_MODE = params.simulation.accessModes;
 paList = fieldnames(PA);
 pcList = fieldnames(PC);
 numPA_trad = 6;   % baseline, random, EPA, FPCP, D-WMMSE, WMMSE
-numPA_gnn  = numel(paList) - numPA_trad;  % learning/reference family: GNN / Local-GNN / DCGNN / DQN / DDPG
+numPA_gnn  = numel(paList) - numPA_trad;  % learning/reference family: GNN / Local-GNN / DCGNN / U-GNN / DQN / DDPG
 numPC = length(pcList);  % 4
 numMode = length(AP_MODE);
 
@@ -195,6 +197,14 @@ if (runStage == 2 || runStage == 3) && isfile(dcgnnModelPath)
         warning('DCGNN warm-up failed; timed inference may include Python initialization. Reason: %s', ME.message);
     end
 end
+if (runStage == 2 || runStage == 3) && isfile(ugnnModelPath)
+    try
+        fprintf('  Warming up U-GNN runtime (excluded from timing metrics)...\n');
+        computeRhoUGNN([], ones(L, K), ones(L, K), 10^(SNR_dB(1)/10), ugnnModelPath, sigma_e);
+    catch ME
+        warning('U-GNN warm-up failed; timed inference may include Python initialization. Reason: %s', ME.message);
+    end
+end
 if (runStage == 2 || runStage == 3) && isfile(dqnModelPath)
     try
         fprintf('  Warming up DQN runtime (excluded from timing metrics)...\n');
@@ -216,12 +226,13 @@ ESR_acc = zeros(numAlgos, num_snr);
 ESR_best = -inf(1, num_snr);
 ESR_best_algo = strings(1, num_snr);
 Perf = struct();
-Perf.methodNames = {'Baseline', 'FPCP', 'D-WMMSE', 'WMMSE', 'GNN', 'Local-GNN', 'DCGNN', 'DQN', 'DDPG'};
+Perf.methodNames = {'Baseline', 'FPCP', 'D-WMMSE', 'WMMSE', 'GNN', 'Local-GNN', 'DCGNN', 'U-GNN', 'DQN', 'DDPG'};
 Perf.modeNames = AP_MODE;
 Perf.SNR_dB = SNR_dB;
 Perf.time_pa_sec = zeros(numel(Perf.methodNames), num_snr, numMode);
 Perf.time_core_sec = zeros(numel(Perf.methodNames), num_snr, numMode);
 Perf.comm_bytes = zeros(numel(Perf.methodNames), num_snr, numMode);
+Perf.time_pc_sec = zeros(numPC, num_snr, numMode);
 Perf.modelBytes_GNN = 0;
 if isfile(gnnLocalModelPath)
     d1 = dir(gnnLocalModelPath);
@@ -236,6 +247,11 @@ Perf.modelBytes_DCGNN = 0;
 if isfile(dcgnnModelPath)
     d1 = dir(dcgnnModelPath);
     Perf.modelBytes_DCGNN = double(d1.bytes);
+end
+Perf.modelBytes_UGNN = 0;
+if isfile(ugnnModelPath)
+    d1 = dir(ugnnModelPath);
+    Perf.modelBytes_UGNN = double(d1.bytes);
 end
 Perf.modelBytes_DQN = 0;
 if isfile(dqnModelPath)
@@ -253,7 +269,7 @@ scenarioFP = buildParamFingerprint(L, K, N, tau_p, tau_c, ASD_varphi, ASD_theta,
     nbrOfRealizations, sigma_e, p, nIter, NaN);
 snrFPs = buildSNRFingerprints(L, K, N, tau_p, tau_c, ASD_varphi, ASD_theta, ...
     nbrOfRealizations, sigma_e, p, nIter, SNR_dB);
-snrCacheVersion = '_v17_gnn_share_logits';
+snrCacheVersion = '_v19_latency_timing';
 for fpIdx = 1:numel(snrFPs)
     snrFPs(fpIdx).fp = [snrFPs(fpIdx).fp snrCacheVersion];
 end
@@ -345,6 +361,10 @@ for s = 1:numScenarios
     for snr_idx = 1:num_snr
         Pt = db2pow(SNR_dB(snr_idx));
         snrCacheFile = fullfile(dataPath, sprintf('cache_snr_s%d_sn%.0f.mat', s, SNR_dB(snr_idx)));
+        perfTimePA_snr = zeros(numel(Perf.methodNames), numMode);
+        perfTimeCore_snr = zeros(numel(Perf.methodNames), numMode);
+        perfCommBytes_snr = zeros(numel(Perf.methodNames), numMode);
+        perfTimePC_snr = zeros(numPC, numMode);
 
         % --- 检查 SNR 缓存有效性 ---
         stage1_ok = false;
@@ -391,6 +411,7 @@ for s = 1:numScenarios
             time_sec_s1 = zeros(numel(Perf.methodNames), numMode);
             time_core_s1 = zeros(numel(Perf.methodNames), numMode);
             comm_bytes_s1 = zeros(numel(Perf.methodNames), numMode);
+            time_pc_s1 = zeros(numPC, numMode);
 
             for mi = 1:numMode
                 modeName = AP_MODE{mi};
@@ -402,6 +423,7 @@ for s = 1:numScenarios
                 V_cache_mode = struct();
                 for ci = 1:numPC
                     pcName = pcList{ci};
+                    pc_tic = tic;
                     switch pcName
                         case 'MR'
                             [V, sc] = functionPrecoding_MR(Hhat, nbrOfRealizations, N, K, L);
@@ -412,6 +434,7 @@ for s = 1:numScenarios
                         case 'RMMSE'
                             [V, sc] = functionPrecoding_RobustMMSE(Hhat, D, nbrOfRealizations, N, K, L, 1, sigma_e, nIter);
                     end
+                    time_pc_s1(ci, mi) = toc(pc_tic);
                     V_cache_mode.(pcName).V = V;
                     V_cache_mode.(pcName).scaling = sc;
                 end
@@ -523,17 +546,17 @@ for s = 1:numScenarios
                 end
             end
 
-            Perf.time_pa_sec(:, snr_idx, :) = time_sec_s1;
-            Perf.time_core_sec(:, snr_idx, :) = time_core_s1;
-            Perf.comm_bytes(:, snr_idx, :) = comm_bytes_s1;
+            perfTimePA_snr = time_sec_s1;
+            perfTimeCore_snr = time_core_s1;
+            perfCommBytes_snr = comm_bytes_s1;
+            perfTimePC_snr = time_pc_s1;
 
             % 保存 stage1 到 SNR 缓存
             if useCache
                 saveSNRCache(snrCacheFile, snrFPs(snr_idx).fp, s, SNR_dB(snr_idx), Pt, ...
                     V_cache_all, pa_rhos_all, ESR_cell_all, ...
                     struct(), cell(numMode, numPC, numPA_gnn), ...  % 空 GNN 结果
-                    Perf.time_pa_sec(:, snr_idx, :), Perf.time_core_sec(:, snr_idx, :), ...
-                    Perf.comm_bytes(:, snr_idx, :), ...
+                    perfTimePA_snr, perfTimeCore_snr, perfCommBytes_snr, perfTimePC_snr, ...
                     allModelPaths, allModelNames, true, false);
             end
 
@@ -556,15 +579,18 @@ for s = 1:numScenarios
 
             % 恢复性能数据 (仅 stage1 部分)
             if isfield(snrCacheData, 'time_pa_sec')
-                Perf.time_pa_sec(:, snr_idx, :) = snrCacheData.time_pa_sec;
+                perfTimePA_snr = snrCacheData.time_pa_sec;
             end
             if isfield(snrCacheData, 'time_core_sec')
-                Perf.time_core_sec(:, snr_idx, :) = snrCacheData.time_core_sec;
+                perfTimeCore_snr = snrCacheData.time_core_sec;
             elseif isfield(snrCacheData, 'time_pa_sec')
-                Perf.time_core_sec(:, snr_idx, :) = snrCacheData.time_pa_sec;
+                perfTimeCore_snr = snrCacheData.time_pa_sec;
             end
             if isfield(snrCacheData, 'comm_bytes')
-                Perf.comm_bytes(:, snr_idx, :) = snrCacheData.comm_bytes;
+                perfCommBytes_snr = snrCacheData.comm_bytes;
+            end
+            if isfield(snrCacheData, 'time_pc_sec')
+                perfTimePC_snr = snrCacheData.time_pc_sec;
             end
 
             if VERBOSE; fprintf('  |   |  [Stage 1 loaded from cache]\n'); end
@@ -645,6 +671,21 @@ for s = 1:numScenarios
                         rho_DCGNN_core_sec = rho_DCGNN_sec;
                     end
 
+                    % U-GNN: teacher-free unsupervised GNN trained from SE proxy
+                    rho_UGNN_sec = nan;
+                    rho_UGNN_core_sec = nan;
+                    try
+                        rho_UGNN_t = tic;
+                        [rho_UGNN, rho_UGNN_timing] = computeRhoUGNN(Hhat, D, gainOverNoise, Pt, ugnnModelPath, sigma_e);
+                        rho_UGNN_sec = toc(rho_UGNN_t);
+                        rho_UGNN_core_sec = rho_UGNN_timing.forward_sec;
+                    catch ME
+                        warning('U-GNN inference failed for %s at SNR %.0f dB; falling back to EPA. Reason: %s', ...
+                            modeName, SNR_dB(snr_idx), ME.message);
+                        rho_UGNN = rho_fallback;
+                        rho_UGNN_core_sec = rho_UGNN_sec;
+                    end
+
                     % DQN and DDPG RL baselines (one-step reward-trained policies)
                     rho_DQN_sec = nan;
                     rho_DQN_core_sec = nan;
@@ -693,6 +734,7 @@ for s = 1:numScenarios
                     pa_rhos_gnn_mode.GNN    = rho_GNN;
                     pa_rhos_gnn_mode.LocalGNN = rho_LocalGNN;
                     pa_rhos_gnn_mode.DCGNN = rho_DCGNN;
+                    pa_rhos_gnn_mode.UGNN = rho_UGNN;
                     pa_rhos_gnn_mode.DQN = rho_DQN;
                     pa_rhos_gnn_mode.DDPG = rho_DDPG;
                     pa_rhos_gnn_mode.GNNMLP = rho_GNNMLP;
@@ -713,6 +755,10 @@ for s = 1:numScenarios
                             case 'DCGNN'
                                 if isfinite(rho_DCGNN_sec); time_sec_s2(pi, mi) = rho_DCGNN_sec; end
                                 if isfinite(rho_DCGNN_core_sec); time_core_s2(pi, mi) = rho_DCGNN_core_sec; end
+                                comm_bytes_s2(pi, mi) = featBytes;
+                            case 'UGNN'
+                                if isfinite(rho_UGNN_sec); time_sec_s2(pi, mi) = rho_UGNN_sec; end
+                                if isfinite(rho_UGNN_core_sec); time_core_s2(pi, mi) = rho_UGNN_core_sec; end
                                 comm_bytes_s2(pi, mi) = featBytes;
                             case 'DQN'
                                 if isfinite(rho_DQN_sec); time_sec_s2(pi, mi) = rho_DQN_sec; end
@@ -743,6 +789,8 @@ for s = 1:numScenarios
                                 gnn_rhos{pi} = rho_LocalGNN;
                             case 'DCGNN'
                                 gnn_rhos{pi} = rho_DCGNN;
+                            case 'UGNN'
+                                gnn_rhos{pi} = rho_UGNN;
                             case 'DQN'
                                 gnn_rhos{pi} = rho_DQN;
                             case 'DDPG'
@@ -803,6 +851,8 @@ for s = 1:numScenarios
                             methodName = 'Local-GNN';
                         case 'DCGNN'
                             methodName = 'DCGNN';
+                        case 'UGNN'
+                            methodName = 'U-GNN';
                         case 'DQN'
                             methodName = 'DQN';
                         case 'DDPG'
@@ -812,9 +862,9 @@ for s = 1:numScenarios
                     end
                     perfIdx = find(strcmp(Perf.methodNames, methodName), 1);
                     if ~isempty(perfIdx)
-                        Perf.time_pa_sec(perfIdx, snr_idx, :) = time_sec_s2(pi, :);
-                        Perf.time_core_sec(perfIdx, snr_idx, :) = time_core_s2(pi, :);
-                        Perf.comm_bytes(perfIdx, snr_idx, :) = comm_bytes_s2(pi, :);
+                        perfTimePA_snr(perfIdx, :) = time_sec_s2(pi, :);
+                        perfTimeCore_snr(perfIdx, :) = time_core_s2(pi, :);
+                        perfCommBytes_snr(perfIdx, :) = comm_bytes_s2(pi, :);
                     end
                 end
 
@@ -833,8 +883,7 @@ for s = 1:numScenarios
                     saveSNRCache(snrCacheFile, snrFPs(snr_idx).fp, s, SNR_dB(snr_idx), Pt, ...
                         V_cache_all_save, pa_rhos_all_save, ESR_cell_all_save, ...
                         pa_rhos_gnn_all, ESR_cell_gnn, ...
-                        Perf.time_pa_sec(:, snr_idx, :), Perf.time_core_sec(:, snr_idx, :), ...
-                        Perf.comm_bytes(:, snr_idx, :), ...
+                        perfTimePA_snr, perfTimeCore_snr, perfCommBytes_snr, perfTimePC_snr, ...
                         allModelPaths, allModelNames, true, true);
                 end
 
@@ -854,6 +903,15 @@ for s = 1:numScenarios
             end
         end
 
+        Perf.time_pa_sec(:, snr_idx, :) = reshape(squeeze(Perf.time_pa_sec(:, snr_idx, :)) + perfTimePA_snr, ...
+            [numel(Perf.methodNames), 1, numMode]);
+        Perf.time_core_sec(:, snr_idx, :) = reshape(squeeze(Perf.time_core_sec(:, snr_idx, :)) + perfTimeCore_snr, ...
+            [numel(Perf.methodNames), 1, numMode]);
+        Perf.comm_bytes(:, snr_idx, :) = reshape(squeeze(Perf.comm_bytes(:, snr_idx, :)) + perfCommBytes_snr, ...
+            [numel(Perf.methodNames), 1, numMode]);
+        Perf.time_pc_sec(:, snr_idx, :) = reshape(squeeze(Perf.time_pc_sec(:, snr_idx, :)) + perfTimePC_snr, ...
+            [numPC, 1, numMode]);
+
         completedIters = completedIters + numAlgos;
         fprintf('  |   SNR %d done\n', snr_idx);
     end  % end SNR loop
@@ -870,6 +928,11 @@ end
 
 %% ================= 结果汇总 =================
 ESR_mean = ESR_acc / numScenarios;
+[ESR_best, ESR_best_idx] = max(ESR_mean, [], 1);
+ESR_best_algo = strings(1, numel(SNR_dB));
+for snr_idx = 1:numel(SNR_dB)
+    ESR_best_algo(snr_idx) = string(algoTable(ESR_best_idx(snr_idx)).name);
+end
 
 if exist('Perf', 'var') && isstruct(Perf)
     Perf.time_pa_sec = Perf.time_pa_sec / numScenarios;
@@ -877,6 +940,9 @@ if exist('Perf', 'var') && isstruct(Perf)
         Perf.time_core_sec = Perf.time_core_sec / numScenarios;
     end
     Perf.comm_bytes = Perf.comm_bytes / numScenarios;
+    if isfield(Perf, 'time_pc_sec')
+        Perf.time_pc_sec = Perf.time_pc_sec / numScenarios;
+    end
 end
 
 fprintf('\n');
@@ -959,7 +1025,7 @@ end
 function saveSNRCache(filePath, paramFingerprint, scenarioIdx, snr_dB, Pt, ...
         V_cache_all, pa_rhos_all, ESR_cell_all, ...
         pa_rhos_gnn_all, ESR_cell_gnn, ...
-        time_pa_sec, time_core_sec, comm_bytes, allModelPaths, allModelNames, ...
+        time_pa_sec, time_core_sec, comm_bytes, time_pc_sec, allModelPaths, allModelNames, ...
         stage1_valid, stage2_valid)
 % 保存 SNR 级缓存文件
     modelModTimes = struct();
@@ -974,7 +1040,7 @@ function saveSNRCache(filePath, paramFingerprint, scenarioIdx, snr_dB, Pt, ...
     save(filePath, 'paramFingerprint', 'scenarioIdx', 'snr_dB', 'Pt', ...
         'V_cache_all', 'pa_rhos_all', 'ESR_cell_all', ...
         'pa_rhos_gnn_all', 'ESR_cell_gnn', ...
-        'time_pa_sec', 'time_core_sec', 'comm_bytes', ...
+        'time_pa_sec', 'time_core_sec', 'comm_bytes', 'time_pc_sec', ...
         'modelModTimes', 'stage1_valid', 'stage2_valid', '-v7.3');
 end
 
@@ -1002,6 +1068,7 @@ function Ablation = buildSyncAblationMetrics(ESR_mean, algoTable, SNR_dB, Perf, 
     numSNR = numel(SNR_dB);
     syncDelayMs = zeros(numAlgos, numSNR);
     computeDelayMs = nan(numAlgos, numSNR);
+    pcComputeDelayMs = nan(numAlgos, numSNR);
     controlDelayMs = zeros(numAlgos, numSNR);
     syncBytes = zeros(numAlgos, numSNR);
     syncRounds = zeros(numAlgos, numSNR);
@@ -1015,17 +1082,24 @@ function Ablation = buildSyncAblationMetrics(ESR_mean, algoTable, SNR_dB, Perf, 
         [paRounds, paBytes] = estimatePASync(algoTable(ai).pa, L, K, cfg, payloadRatio);
 
         totalRounds = pcRounds + paRounds;
-        totalBytes = pcBytes + paBytes;
-        fixedSyncMs = totalRounds * cfg.syncRttMs + bytesToMs(totalBytes, cfg.fronthaulMbps);
+        baseBytes = pcBytes + paBytes;
 
         for si = 1:numSNR
-            syncDelayMs(ai, si) = fixedSyncMs;
+            [featureBytes, featureRounds] = lookupFeatureCollectionBytes(algoTable(ai).pa, ...
+                algoTable(ai).mode, si, L, K, Perf);
+            totalBytes = baseBytes + featureBytes;
+            totalRoundsSi = totalRounds + featureRounds;
+            syncDelayMs(ai, si) = totalRoundsSi * cfg.syncRttMs + ...
+                bytesToMs(totalBytes, cfg.fronthaulMbps);
             syncBytes(ai, si) = totalBytes;
-            syncRounds(ai, si) = totalRounds;
+            syncRounds(ai, si) = totalRoundsSi;
             computeDelayMs(ai, si) = lookupComputeDelayMs(algoTable(ai).pa, ...
                 algoTable(ai).mode, si, Perf);
-            if cfg.includeComputeTime && isfinite(computeDelayMs(ai, si))
-                controlDelayMs(ai, si) = syncDelayMs(ai, si) + computeDelayMs(ai, si);
+            pcComputeDelayMs(ai, si) = lookupPCComputeDelayMs(algoTable(ai).pc, ...
+                algoTable(ai).mode, si, Perf);
+            totalComputeMs = sumFiniteDelays([computeDelayMs(ai, si), pcComputeDelayMs(ai, si)]);
+            if cfg.includeComputeTime
+                controlDelayMs(ai, si) = syncDelayMs(ai, si) + totalComputeMs;
             else
                 controlDelayMs(ai, si) = syncDelayMs(ai, si);
             end
@@ -1039,6 +1113,7 @@ function Ablation = buildSyncAblationMetrics(ESR_mean, algoTable, SNR_dB, Perf, 
     Ablation.avgESR = avgESR;
     Ablation.sync_delay_ms = syncDelayMs;
     Ablation.compute_delay_ms = computeDelayMs;
+    Ablation.pc_compute_delay_ms = pcComputeDelayMs;
     Ablation.control_delay_ms = controlDelayMs;
     Ablation.sync_bytes = syncBytes;
     Ablation.sync_rounds = syncRounds;
@@ -1089,6 +1164,69 @@ function delayMs = bytesToMs(numBytes, fronthaulMbps)
 end
 
 %% ------------------------------------------------------------------------
+function [bytes, rounds] = lookupFeatureCollectionBytes(paName, modeName, snrIdx, L, K, Perf)
+% Centralized learned PA methods avoid iterative PA synchronization, but
+% still need one-shot feature collection at the central inference point.
+    bytes = 0;
+    rounds = 0;
+    switch paName
+        case 'GNN'
+            methodName = 'GNN';
+        case 'DCGNN'
+            methodName = 'DCGNN';
+        case 'UGNN'
+            methodName = 'U-GNN';
+        case 'DQN'
+            methodName = 'DQN';
+        case 'DDPG'
+            methodName = 'DDPG';
+        otherwise
+            return;
+    end
+
+    bytes = double(L * K * 16);
+    rounds = 1;
+
+    if isempty(Perf) || ~isstruct(Perf) || ~isfield(Perf, 'comm_bytes') || ...
+            ~isfield(Perf, 'modeNames') || ~isfield(Perf, 'methodNames')
+        return;
+    end
+
+    mi = find(strcmp(Perf.modeNames, modeName), 1);
+    pi = find(strcmp(Perf.methodNames, methodName), 1);
+    if isempty(mi) || isempty(pi); return; end
+
+    value = Perf.comm_bytes(pi, snrIdx, mi);
+    if isfinite(value) && value > 0
+        bytes = max(bytes, value);
+    end
+end
+
+%% ------------------------------------------------------------------------
+function delayMs = lookupPCComputeDelayMs(pcName, modeName, snrIdx, Perf)
+    delayMs = 0;
+    if isempty(Perf) || ~isstruct(Perf) || ~isfield(Perf, 'time_pc_sec') || ...
+            ~isfield(Perf, 'modeNames')
+        return;
+    end
+    pcOrder = {'MR', 'LMMSE', 'RMMSE', 'LMMSE_G'};
+    ci = find(strcmp(pcOrder, pcName), 1);
+    mi = find(strcmp(Perf.modeNames, modeName), 1);
+    if isempty(ci) || isempty(mi); return; end
+    delayMs = Perf.time_pc_sec(ci, snrIdx, mi) * 1000;
+end
+
+%% ------------------------------------------------------------------------
+function totalMs = sumFiniteDelays(values)
+    values = values(isfinite(values));
+    if isempty(values)
+        totalMs = 0;
+    else
+        totalMs = sum(values);
+    end
+end
+
+%% ------------------------------------------------------------------------
 function delayMs = lookupComputeDelayMs(paName, modeName, snrIdx, Perf)
     delayMs = nan;
     if isempty(Perf) || ~isstruct(Perf) || ~isfield(Perf, 'time_pa_sec') || ...
@@ -1110,6 +1248,8 @@ function delayMs = lookupComputeDelayMs(paName, modeName, snrIdx, Perf)
             methodName = 'Local-GNN';
         case 'DCGNN'
             methodName = 'DCGNN';
+        case 'UGNN'
+            methodName = 'U-GNN';
         case 'DQN'
             methodName = 'DQN';
         case 'DDPG'

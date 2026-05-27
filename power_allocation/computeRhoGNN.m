@@ -50,6 +50,7 @@ function [rho, timing] = computeRhoGNN(~, D, gainOverNoise, Pt, gnnModelPath, si
     timing.collate_sec = pyFloat(result, 'collate_sec');
     timing.forward_sec = pyFloat(result, 'forward_sec');
     timing.post_sec = pyFloat(result, 'post_sec');
+    timing.mix_lambda_mean = pyFloat(result, 'mix_lambda_mean');
     timing.python_total_sec = pyFloat(result, 'python_total_sec');
     timing.total_sec = toc(totalTic);
     timing.bridge_sec = max(timing.total_sec - timing.python_total_sec, 0);
@@ -64,6 +65,7 @@ function timing = emptyTiming()
         'collate_sec', 0, ...
         'forward_sec', 0, ...
         'post_sec', 0, ...
+        'mix_lambda_mean', 1, ...
         'python_total_sec', 0);
 end
 

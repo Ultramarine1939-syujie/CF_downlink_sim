@@ -232,7 +232,7 @@ class PowerGNN_MLP(nn.Module):
         rho_flat = self.ap_predictor(pred_input)  # (batch, K)
 
         # tanh + reshape to (batch, L, K)
-        if self.output_kind != "share_logits":
+        if self.output_kind not in ("share_logits", "share_logits_mix"):
             rho_flat = torch.tanh(rho_flat) * self.output_scale
         rho = rho_flat.view(batch_size, self.L, self.K)
 
@@ -416,6 +416,8 @@ class PowerGNN_GAT(nn.Module):
             nn.LayerNorm(hidden_dim) for _ in range(num_layers)
         ])
 
+        output_dim = K + 1 if output_kind == "share_logits_mix" else K
+
         # ── AP 节点级预测头（带残差连接）──
         self.ap_predictor = nn.Sequential(
             nn.Linear(hidden_dim + self.ap_input_dim, hidden_dim),  # 拼接隐藏态+输入特征
@@ -424,7 +426,7 @@ class PowerGNN_GAT(nn.Module):
             nn.Linear(hidden_dim, hidden_dim // 2),
             nn.GELU(),
             nn.Dropout(dropout * 0.5),
-            nn.Linear(hidden_dim // 2, K)   # 每个AP输出K个值
+            nn.Linear(hidden_dim // 2, output_dim)
         )
 
         # 动态输出缩放（默认匹配 [-1,+1] 标签）
@@ -483,9 +485,10 @@ class PowerGNN_GAT(nn.Module):
         rho_flat = self.ap_predictor(ap_pred_input)         # (batch*L, K)
 
         # ── 6. tanh 约束输出范围 + reshape ──
-        if self.output_kind != "share_logits":
+        if self.output_kind not in ("share_logits", "share_logits_mix"):
             rho_flat = torch.tanh(rho_flat) * self.output_scale  # (batch*L, K)
-        rho = rho_flat.view(batch_size, num_ap, num_ue)       # (batch, L, K)
+        output_dim = num_ue + 1 if self.output_kind == "share_logits_mix" else num_ue
+        rho = rho_flat.view(batch_size, num_ap, output_dim)       # (batch, L, K) or (batch, L, K+1)
 
         return rho
 

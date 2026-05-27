@@ -10,10 +10,11 @@ algoPAs = {algoTable.pa};
 algoPCs = {algoTable.pc};
 algoModes = {algoTable.mode};
 
-paOrder = {'LocalGNN', 'DCGNN', 'GNN', 'DDPG', 'DQN', 'DWMMSE', 'WMMSE', 'FPCP', 'EPA', 'random', 'baseline'};
-paLabels = {'Local-GNN', 'DCGNN', 'GNN', 'DDPG', 'DQN', 'D-WMMSE', 'WMMSE', 'FPCP', 'EPA', 'Random', 'Baseline'};
+paOrder = {'LocalGNN', 'UGNN', 'DCGNN', 'GNN', 'DDPG', 'DQN', 'DWMMSE', 'WMMSE', 'FPCP', 'EPA', 'random', 'baseline'};
+paLabels = {'Local-GNN', 'U-GNN', 'DCGNN', 'GNN', 'DDPG', 'DQN', 'D-WMMSE', 'WMMSE', 'FPCP', 'EPA', 'Random', 'Baseline'};
 paColors = [
     0.00 0.52 0.58
+    0.00 0.38 0.38
     0.10 0.35 0.95
     0.45 0.00 0.75
     0.80 0.25 0.65
@@ -25,7 +26,7 @@ paColors = [
     0.55 0.55 0.55
     0.20 0.20 0.20
 ];
-paMarkers = {'x', '^', 'o', '+', '*', 'h', 's', '>', 'd', 'v', 'p'};
+paMarkers = {'x', 'p', '^', 'o', '+', '*', 'h', 's', '>', 'd', 'v', '<'};
 
 FS_AXIS = 12;
 FS_TITLE = 13;
@@ -45,7 +46,7 @@ for pi = 1:numel(paOrder)
     idx = getBestCurve(ESR_mean, algoTable, paOrder{pi}, 'DCC');
     if isempty(idx); continue; end
     lw = LW_BASE;
-    if any(strcmp(paOrder{pi}, {'GNN', 'LocalGNN', 'DCGNN', 'DQN', 'DDPG'})); lw = LW_GNN; end
+    if any(strcmp(paOrder{pi}, {'GNN', 'LocalGNN', 'DCGNN', 'UGNN', 'DQN', 'DDPG'})); lw = LW_GNN; end
     plot(SNR_dB, ESR_mean(idx, :), ['-' paMarkers{pi}], ...
         'Color', paColors(pi, :), 'LineWidth', lw, 'MarkerSize', 7);
     legendLabels{end+1} = sprintf('%s + %s (%s)', paLabels{pi}, ...
@@ -67,7 +68,7 @@ for pi = 1:numel(paOrder)
     idx = findExact(algoTable, paOrder{pi}, fixedPC, 'DCC');
     if isempty(idx); continue; end
     lw = LW_BASE;
-    if any(strcmp(paOrder{pi}, {'GNN', 'LocalGNN', 'DCGNN', 'DQN', 'DDPG'})); lw = LW_GNN; end
+    if any(strcmp(paOrder{pi}, {'GNN', 'LocalGNN', 'DCGNN', 'UGNN', 'DQN', 'DDPG'})); lw = LW_GNN; end
     plot(SNR_dB, ESR_mean(idx, :), ['-' paMarkers{pi}], ...
         'Color', paColors(pi, :), 'LineWidth', lw, 'MarkerSize', 7);
     legendLabels{end+1} = sprintf('%s (%s)', paLabels{pi}, algoModes{idx}); %#ok<AGROW>
@@ -82,9 +83,9 @@ saveFigure(fig2, savePath, isSaveFig, 'Fig2_RMMSE_PA_Comparison');
 %% Fig 3: Learning-family gap to WMMSE under the same PC/mode
 fig3 = figure('Visible', 'off', 'Position', [100 100 900 560]);
 wmmseIdx = findExact(algoTable, 'WMMSE', fixedPC, 'DCC');
-gnnFamily = {'LocalGNN', 'DCGNN', 'GNN', 'DDPG', 'DQN'};
-gnnFamilyLabels = {'Local-GNN', 'DCGNN', 'GNN', 'DDPG', 'DQN'};
-gnnFamilyColors = [paColors(1, :); paColors(2, :); paColors(3, :); paColors(4, :); paColors(5, :)];
+gnnFamily = {'LocalGNN', 'UGNN', 'DCGNN', 'GNN', 'DDPG', 'DQN'};
+gnnFamilyLabels = {'Local-GNN', 'U-GNN', 'DCGNN', 'GNN', 'DDPG', 'DQN'};
+gnnFamilyColors = [paColors(1, :); paColors(2, :); paColors(3, :); paColors(4, :); paColors(5, :); paColors(6, :)];
 gapPctMat = [];
 gapLabels = {};
 gapColors = [];
@@ -148,10 +149,10 @@ line([0.02 0.98], [0.90 0.90], 'Color', [0.25 0.25 0.25], 'LineWidth', 1.2);
 wmmseBestIdx = getBestCurve(ESR_mean, algoTable, 'WMMSE', 'DCC');
 wmmseAvg = mean(ESR_mean(wmmseBestIdx, :));
 
-notes = containers.Map(paOrder, {'AP-local learned split', 'dynamic graph learned split', ...
-    'full-graph learned split', 'DDPG reward-trained split', 'DQN reward-trained alpha', ...
-    'fixed-round distributed update', 'iterative reference', 'fractional power control', ...
-    'equal power', 'random baseline', 'large-scale baseline'});
+notes = containers.Map(paOrder, {'AP-local learned split', 'teacher-free GNN split', ...
+    'dynamic graph learned split', 'full-graph learned split', 'DDPG reward-trained split', ...
+    'DQN reward-trained alpha', 'fixed-round distributed update', 'iterative reference', ...
+    'fractional power control', 'equal power', 'random baseline', 'large-scale baseline'});
 
 for pi = 1:numel(paOrder)
     idx = getBestCurve(ESR_mean, algoTable, paOrder{pi}, 'DCC');
@@ -182,9 +183,10 @@ else
     gIdx = find(strcmp(Perf.methodNames, 'GNN'), 1);
     lIdx = find(strcmp(Perf.methodNames, 'Local-GNN'), 1);
     dIdx = find(strcmp(Perf.methodNames, 'DCGNN'), 1);
+    uIdx = find(strcmp(Perf.methodNames, 'U-GNN'), 1);
     dqIdx = find(strcmp(Perf.methodNames, 'DQN'), 1);
     ddIdx = find(strcmp(Perf.methodNames, 'DDPG'), 1);
-    if isempty(wIdx) || (isempty(gIdx) && isempty(lIdx) && isempty(dIdx) && isempty(dqIdx) && isempty(ddIdx))
+    if isempty(wIdx) || (isempty(gIdx) && isempty(lIdx) && isempty(dIdx) && isempty(uIdx) && isempty(dqIdx) && isempty(ddIdx))
         text(0.5, 0.5, 'WMMSE/learning-family timing rows unavailable', ...
             'Units', 'normalized', 'HorizontalAlignment', 'center', 'FontSize', FS_AXIS);
     else
@@ -200,22 +202,27 @@ else
         if ~isempty(gIdx)
             methodIdx(end+1) = gIdx; %#ok<AGROW>
             methodLabels{end+1} = 'GNN'; %#ok<AGROW>
-            methodColors(end+1, :) = paColors(3, :); %#ok<AGROW>
+            methodColors(end+1, :) = paColors(4, :); %#ok<AGROW>
         end
         if ~isempty(dIdx)
             methodIdx(end+1) = dIdx; %#ok<AGROW>
             methodLabels{end+1} = 'DCGNN'; %#ok<AGROW>
+            methodColors(end+1, :) = paColors(3, :); %#ok<AGROW>
+        end
+        if ~isempty(uIdx)
+            methodIdx(end+1) = uIdx; %#ok<AGROW>
+            methodLabels{end+1} = 'U-GNN'; %#ok<AGROW>
             methodColors(end+1, :) = paColors(2, :); %#ok<AGROW>
         end
         if ~isempty(ddIdx)
             methodIdx(end+1) = ddIdx; %#ok<AGROW>
             methodLabels{end+1} = 'DDPG'; %#ok<AGROW>
-            methodColors(end+1, :) = paColors(4, :); %#ok<AGROW>
+            methodColors(end+1, :) = paColors(5, :); %#ok<AGROW>
         end
         if ~isempty(dqIdx)
             methodIdx(end+1) = dqIdx; %#ok<AGROW>
             methodLabels{end+1} = 'DQN'; %#ok<AGROW>
-            methodColors(end+1, :) = paColors(5, :); %#ok<AGROW>
+            methodColors(end+1, :) = paColors(6, :); %#ok<AGROW>
         end
 
         e2eMat = zeros(numel(methodIdx), num_snr);
@@ -235,13 +242,13 @@ else
         end
 
         tiledlayout(2, 2, 'TileSpacing', 'compact', 'Padding', 'compact');
-        plotTimeComparison(SNR_dB, wmmseE2E, e2eMat, methodLabels, methodColors, paColors(7, :), ...
+        plotTimeComparison(SNR_dB, wmmseE2E, e2eMat, methodLabels, methodColors, paColors(8, :), ...
             FS_AXIS, FS_TITLE, FS_LEG, ...
             'End-to-End PA Time', 'Includes MATLAB-Python Bridge');
         plotSpeedupComparison(SNR_dB, wmmseE2E ./ e2eMat, methodLabels, methodColors, ...
             FS_AXIS, FS_TITLE, FS_LEG, ...
             'End-to-End Speedup');
-        plotTimeComparison(SNR_dB, wmmseCore, coreMat, methodLabels, methodColors, paColors(7, :), ...
+        plotTimeComparison(SNR_dB, wmmseCore, coreMat, methodLabels, methodColors, paColors(8, :), ...
             FS_AXIS, FS_TITLE, FS_LEG, ...
             'Core Compute Time', 'WMMSE loop vs GNN forward');
         plotSpeedupComparison(SNR_dB, wmmseCore ./ coreMat, methodLabels, methodColors, ...

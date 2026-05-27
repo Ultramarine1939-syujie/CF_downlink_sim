@@ -114,6 +114,7 @@ params.gnn = struct();
 params.gnn.fullModelFile = fullfile('models', 'best_gat_gnn_power.pt');
 params.gnn.localModelFile = fullfile('models', 'best_local_gnn_power.pt');
 params.gnn.dcgnnModelFile = fullfile('models', 'best_dcgnn_power.pt');
+params.gnn.ugnnModelFile = fullfile('models', 'best_ugnn_power.pt');
 params.gnn.hidden_dim = 128;
 params.gnn.num_heads = 4;
 params.gnn.num_layers = 3;

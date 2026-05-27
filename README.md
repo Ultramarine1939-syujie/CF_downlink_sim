@@ -201,6 +201,9 @@ python train_gnn.py --data "../data/gnn_training/*.mat" --epochs 300
 # 训练动态连接 DCGNN 对比模型
 python train_gnn.py --data "../data/gnn_training/*.mat" --epochs 300 --model_type dcgnn --dcgnn_top_z 15
 
+# 训练无监督 U-GNN 对比模型（teacher-free，不使用 WMMSE 标签）
+python train_gnn_unsup.py --data "../data/gnn_training/*.mat" --epochs 120
+
 # 训练不使用 WMMSE 标签的 DQN/DDPG 强化学习对比模型
 python train_rl_power.py --data "../data/gnn_training/*.mat" --method all --epochs 100
 
@@ -212,6 +215,7 @@ python train_gnn_local.py --data "../data/gnn_training/*.mat" --epochs 120
 
 ```bash
 python train_gnn.py --data "../data/gnn_training/*.mat" --epochs 10 --batch_size 64
+python train_gnn_unsup.py --data "../data/gnn_training/*.mat" --epochs 10 --batch_size 64
 python train_rl_power.py --data "../data/gnn_training/*.mat" --method all --epochs 10
 python train_gnn_local.py --data "../data/gnn_training/*.mat" --epochs 10
 ```
@@ -241,6 +245,7 @@ python train_gnn_local.py --data "../data/gnn_training/*.mat" --epochs 10
 | `best_gat_gnn_power.pt` | **验证集最优模型**（推荐使用） |
 | `best_local_gnn_power.pt` | **Local-GNN 最优模型**（严格分布式 GNN 候选） |
 | `best_dcgnn_power.pt` | **DCGNN 最优模型**（动态 top-z 图连接候选） |
+| `best_ugnn_power.pt` | **U-GNN 最优模型**（无监督/teacher-free，直接优化 SE surrogate，不用 WMMSE 标签） |
 | `best_dqn_power.pt` | **DQN 最优模型**（离散 FPCP 指数动作，奖励训练，不用 WMMSE 标签） |
 | `best_ddpg_power.pt` | **DDPG 最优模型**（连续功率份额 actor，奖励训练，不用 WMMSE 标签） |
 | `final_gat_gnn_power.pt` | 最后一轮模型 |
@@ -262,6 +267,7 @@ CF_downlink_sim/
     ├── best_gat_gnn_power.pt      # 全图 GNN 推理模型（Step 4 产出）
     ├── best_local_gnn_power.pt    # Local-GNN 推理模型（可选，缺失则回退 EPA）
     ├── best_dcgnn_power.pt        # DCGNN 推理模型（可选，缺失则回退 EPA）
+    ├── best_ugnn_power.pt         # U-GNN 推理模型（可选，缺失则回退 EPA）
     ├── best_dqn_power.pt          # DQN 推理模型（可选，缺失则回退 EPA）
     └── best_ddpg_power.pt         # DDPG 推理模型（可选，缺失则回退 EPA）
 ```
@@ -397,7 +403,7 @@ main/SimulationData/
 
 ## 🔬 算法组合说明
 
-仿真系统自动遍历 **44 种算法组合**（11 PA × 4 PC × 1 Mode）：
+仿真系统自动遍历 **48 种算法组合**（12 PA × 4 PC × 1 Mode）：
 
 ### 功率分配方法 (PA)
 
@@ -412,10 +418,11 @@ main/SimulationData/
 | **Random** | 传统 | O(LK) | 随机分配基线 |
 | **GNN** | 智能参考 | O(前向传播) | 全图 GAT-GNN 低时延参考 |
 | **DCGNN** | 智能参考 | O(动态图前向传播) | 动态 top-z 图连接的 GNN 对比模型 |
+| **U-GNN** | 无监督智能参考 | O(前向传播) | 不使用 WMMSE 标签，直接优化大尺度 SE surrogate 的 teacher-free GNN |
 | **DQN** | 强化学习参考 | O(前向传播 + 离散动作选择) | 不使用 WMMSE 标签，选择奖励最优的 FPCP 指数动作 |
 | **DDPG** | 强化学习参考 | O(actor 前向传播) | 不使用 WMMSE 标签，以 FPCP 为基础策略学习连续 residual |
 
-主排名只统计 PC 和 PA 均满足分布式信息约束的组合。Local-GNN、D-WMMSE、FPCP、EPA、Baseline、Random 可作为分布式 PA 候选；WMMSE、L-MMSE-G、GNN、DCGNN、DQN 和 DDPG 保留为集中式/低时延学习参考。
+主排名只统计 PC 和 PA 均满足分布式信息约束的组合。Local-GNN、D-WMMSE、FPCP、EPA、Baseline、Random 可作为分布式 PA 候选；WMMSE、L-MMSE-G、GNN、DCGNN、U-GNN、DQN 和 DDPG 保留为集中式/低时延学习参考。
 
 ### 预编码方法 (PC)
 
@@ -443,6 +450,7 @@ main/SimulationData/
 | WMMSE | ⭐⭐⭐⭐⭐ | 高 | O(LK) CSI | 集中式基准 |
 | GNN | ⭐⭐⭐⭐ | **极低** | **零** | 本地实时 |
 | DCGNN | ⭐⭐⭐⭐ | 低 | 动态图特征 | 动态拓扑学习参考 |
+| U-GNN | ⭐⭐⭐⭐ | 低 | 全局图特征 | 无监督 teacher-free 学习参考 |
 | DDPG | ⭐⭐⭐ | 低 | 全局特征 | 连续动作 RL 参考 |
 | DQN | ⭐⭐⭐ | 低 | 全局特征 | 离散动作 RL 参考 |
 | FPCP | ⭐⭐⭐ | 极低 | 零 | 可扩展传统基线 |
@@ -624,6 +632,7 @@ CF_downlink_sim/
 │
 ├── python/                            # 🤖 Python 智能模块
 │   ├── train_gnn.py                   # GAT-GNN / DCGNN 训练主脚本
+│   ├── train_gnn_unsup.py             # 无监督 U-GNN 训练脚本
 │   ├── train_gnn_local.py             # AP-local GNN 训练脚本
 │   ├── gnn_runtime_local.py           # AP-local MATLAB 推理运行时
 │   ├── dataset.py                    # 数据集加载器

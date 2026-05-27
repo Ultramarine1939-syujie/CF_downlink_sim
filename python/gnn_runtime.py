@@ -26,6 +26,10 @@ class _Runtime:
     L: int
     K: int
     dcgnn_top_z: int | None = None
+    share_temperature: float = 1.0
+    mixture_alpha: float = -1.0
+    mix_lambda_min: float = 0.05
+    mix_lambda_max: float = 0.95
 
 
 _CACHE: Dict[Tuple[str, int, int], _Runtime] = {}
@@ -77,7 +81,21 @@ def _load_runtime(model_path: str, L: int, K: int) -> _Runtime:
     if isinstance(checkpoint, dict) and model_type == "dcgnn":
         dcgnn_top_z = int(checkpoint.get("dcgnn_top_z") or 15)
 
-    runtime = _Runtime(model=model, model_type=model_type, L=L, K=K, dcgnn_top_z=dcgnn_top_z)
+    share_temperature = float(checkpoint.get("share_temperature", 1.0)) if isinstance(checkpoint, dict) else 1.0
+    mixture_alpha = float(_ckpt_arg(checkpoint, "mixture_alpha", -1.0))
+    mix_lambda_min = float(_ckpt_arg(checkpoint, "mix_lambda_min", 0.05))
+    mix_lambda_max = float(_ckpt_arg(checkpoint, "mix_lambda_max", 0.95))
+    runtime = _Runtime(
+        model=model,
+        model_type=model_type,
+        L=L,
+        K=K,
+        dcgnn_top_z=dcgnn_top_z,
+        share_temperature=max(share_temperature, 1.0e-6),
+        mixture_alpha=mixture_alpha,
+        mix_lambda_min=mix_lambda_min,
+        mix_lambda_max=mix_lambda_max,
+    )
     _CACHE[key] = runtime
     return runtime
 
@@ -160,13 +178,35 @@ def infer(model_path, sqrt_gain, D_mask, Pt=1.0, sigma_e=0.3):
     post_t0 = time.perf_counter()
     served_count = np.maximum(D.sum(axis=1, keepdims=True), 1.0)
     fallback = Pt * D / served_count
-    if getattr(runtime.model, "output_kind", "norm_tanh") == "share_logits":
-        logits = rho_pred.copy()
+    output_kind = getattr(runtime.model, "output_kind", "norm_tanh")
+    if output_kind == "share_logits_mix":
+        logits = rho_pred[:, :K].copy() / runtime.share_temperature
+        logits[D <= 0.5] = -1.0e9
+        logits = logits - np.max(logits, axis=1, keepdims=True)
+        nn_weights = np.exp(logits) * D
+        nn_sum = nn_weights.sum(axis=1, keepdims=True)
+        nn_share = np.where(nn_sum > 0, nn_weights / np.maximum(nn_sum, 1e-12), fallback / max(Pt, 1e-12))
+
+        gain = np.maximum(sqrt_gain ** 2, 1e-12)
+        prior_weights = np.power(gain, -runtime.mixture_alpha) * D
+        prior_sum = prior_weights.sum(axis=1, keepdims=True)
+        prior_share = np.where(prior_sum > 0, prior_weights / np.maximum(prior_sum, 1e-12), fallback / max(Pt, 1e-12))
+
+        gate = 1.0 / (1.0 + np.exp(-np.clip(rho_pred[:, K:K + 1], -30.0, 30.0)))
+        gate = runtime.mix_lambda_min + (runtime.mix_lambda_max - runtime.mix_lambda_min) * gate
+        shares = gate * nn_share + (1.0 - gate) * prior_share
+        weights = shares * D
+        active_rows = D.sum(axis=1, keepdims=True) > 0
+        mix_lambda_mean = float(np.mean(gate[active_rows])) if np.any(active_rows) else 0.0
+    elif output_kind == "share_logits":
+        logits = rho_pred.copy() / runtime.share_temperature
         logits[D <= 0.5] = -1.0e9
         logits = logits - np.max(logits, axis=1, keepdims=True)
         weights = np.exp(logits) * D
+        mix_lambda_mean = 1.0
     else:
         weights = np.maximum((rho_pred + 1.0) / 2.0, 0.0) * D
+        mix_lambda_mean = 1.0
     row_sum = weights.sum(axis=1, keepdims=True)
     rho = np.where(row_sum > 0, Pt * weights / np.maximum(row_sum, 1e-12), fallback)
     rho = rho.astype(np.float64, copy=False)
@@ -180,6 +220,7 @@ def infer(model_path, sqrt_gain, D_mask, Pt=1.0, sigma_e=0.3):
         "collate_sec": float(collate_sec),
         "forward_sec": float(forward_sec),
         "post_sec": float(post_sec),
+        "mix_lambda_mean": float(mix_lambda_mean),
         "python_total_sec": float(python_total_sec),
     }
 
