@@ -11,6 +11,7 @@ close all; clear;
 scriptDir = fileparts(mfilename('fullpath'));
 rootDir = fileparts(scriptDir);
 addpath(genpath(rootDir));
+paths = getProjectPaths();
 params = getDefaultParams();
 
 % ---------- 系统参数 ----------
@@ -52,18 +53,18 @@ syncAblation.dwmmseRounds = params.dwmmse.rounds;
 syncAblation.wmmseRounds = params.wmmse.simMaxIter;
 
 %% ================= 路径配置 =================
-cd(scriptDir);
-savePath = fullfile(scriptDir, params.output.savePath);
-dataPath = fullfile(scriptDir, params.output.dataPath);
-gnnLocalModelPath = fullfile(rootDir, params.gnn.fullModelFile);
-localGnnModelPath = fullfile(rootDir, params.gnn.localModelFile);
-dcgnnModelPath = fullfile(rootDir, params.gnn.dcgnnModelFile);
-ugnnModelPath = fullfile(rootDir, params.gnn.ugnnModelFile);
-dqnModelPath = fullfile(rootDir, params.rl.dqnModelFile);
-ddpgModelPath = fullfile(rootDir, params.rl.ddpgModelFile);
+cd(paths.main);
+savePath = fullfile(paths.outputRoot, params.output.savePath);
+dataPath = fullfile(paths.outputRoot, params.output.dataPath);
+gnnLocalModelPath = fullfile(paths.root, params.gnn.fullModelFile);
+localGnnModelPath = fullfile(paths.root, params.gnn.localModelFile);
+dcgnnModelPath = fullfile(paths.root, params.gnn.dcgnnModelFile);
+ugnnModelPath = fullfile(paths.root, params.gnn.ugnnModelFile);
+dqnModelPath = fullfile(paths.root, params.rl.dqnModelFile);
+ddpgModelPath = fullfile(paths.root, params.rl.ddpgModelFile);
 
 % 消融实验模型路径
-gnnAblationDir = fullfile(rootDir, 'models', 'ablation');
+gnnAblationDir = fullfile(paths.models, 'ablation');
 gnnMLPModelPath = fullfile(gnnAblationDir, 'mlp_only', 'best_model.pt');
 gnnGlobalNormModelPath = fullfile(gnnAblationDir, 'global_norm', 'best_model.pt');
 

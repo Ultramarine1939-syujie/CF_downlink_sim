@@ -17,6 +17,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from models import PowerGNN_GAT
 from data import GNNDataset, custom_collate
+from project_paths import MODEL_DIR, TRAINING_DATA_GLOB
 
 
 def compute_loss(rho_pred, rho_true, D_mask, rho_is_nonzero):
@@ -124,7 +125,7 @@ def evaluate(model, dataloader, device):
 def main():
     parser = argparse.ArgumentParser(description='Train GNN Power Allocation Model')
     parser.add_argument('--data', type=str,
-                        default='../data/gnn_training/*.mat',
+                        default=TRAINING_DATA_GLOB,
                         help='Path to training data')
     parser.add_argument('--epochs', type=int, default=300)
     parser.add_argument('--batch_size', type=int, default=32)
@@ -134,7 +135,7 @@ def main():
     parser.add_argument('--num_layers', type=int, default=3)
     parser.add_argument('--dropout', type=float, default=0.1)
     parser.add_argument('--val_split', type=float, default=0.15)
-    parser.add_argument('--output_dir', type=str, default='../models')
+    parser.add_argument('--output_dir', type=str, default=str(MODEL_DIR))
     parser.add_argument('--patience', type=int, default=50)
     args = parser.parse_args()
 

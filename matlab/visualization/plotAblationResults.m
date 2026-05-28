@@ -37,12 +37,6 @@ title('Ablation Study: Validation Correlation');
 grid on;
 set(gca, 'FontSize', 11);
 
-% 标注数值
-for i = 1:nVariants
-    text(valCorr(i) + 0.005, i, sprintf('%.4f', valCorr(i)), ...
-        'FontSize', 10, 'VerticalAlignment', 'middle');
-end
-
 if isSaveFig
     saveas(gcf, fullfile(savePath, 'FigA1_Ablation_Corr.png'));
     saveas(gcf, fullfile(savePath, 'FigA1_Ablation_Corr.fig'));
@@ -57,11 +51,6 @@ xlabel('Validation NZ-MSE');
 title('Ablation Study: Nonzero MSE (lower is better)');
 grid on;
 set(gca, 'FontSize', 11);
-
-for i = 1:nVariants
-    text(valMSE(i) + max(valMSE)*0.01, i, sprintf('%.4f', valMSE(i)), ...
-        'FontSize', 10, 'VerticalAlignment', 'middle');
-end
 
 if isSaveFig
     saveas(gcf, fullfile(savePath, 'FigA2_Ablation_MSE.png'));
@@ -166,17 +155,6 @@ title('Ablation Impact on Correlation');
 grid on;
 yline(0, '--k', 'LineWidth', 1);
 set(gca, 'FontSize', 10);
-
-% 标注
-for c = 1:nComp
-    txt = sprintf('%+.4f', deltaCorr(c));
-    yOffset = 0.003;
-    if deltaCorr(c) < 0
-        yOffset = -0.01;
-    end
-    text(xPositions(c), deltaCorr(c) + yOffset, txt, ...
-        'HorizontalAlignment', 'center', 'FontSize', 9, 'FontWeight', 'bold');
-end
 
 if isSaveFig
     saveas(gcf, fullfile(savePath, 'FigA4_Ablation_Pairwise.png'));

@@ -20,10 +20,11 @@ function exportTrainingData(outputDir, nSnapshotsPerSNR, useParallel)
 thisDir = fileparts(mfilename('fullpath'));
 rootDir = fileparts(thisDir);
 addpath(genpath(rootDir));
+paths = getProjectPaths();
 params = getDefaultParams();
 
 if nargin < 1 || isempty(outputDir)
-    outputDir = fullfile(rootDir, 'data', 'gnn_training');
+    outputDir = paths.trainingData;
 end
 if nargin < 2 || isempty(nSnapshotsPerSNR)
     nSnapshotsPerSNR = params.training.nSnapshotsPerSNR;

@@ -114,15 +114,6 @@ else
     end
     hold on; yline(0, 'k--', 'LineWidth', 1);
     if ~isempty(gapPctMat)
-        for gi = 1:size(gapPctMat, 2)
-            xEnd = b(gi).XEndPoints;
-            for si = 1:num_snr
-                if gapPctMat(si, gi) >= 0; va = 'bottom'; else; va = 'top'; end
-                text(xEnd(si), gapPctMat(si, gi), sprintf('%+.1f%%', gapPctMat(si, gi)), ...
-                    'HorizontalAlignment', 'center', 'VerticalAlignment', va, ...
-                    'FontSize', 8, 'FontWeight', 'bold');
-            end
-        end
         legend(gapLabels, 'Location', 'best', 'FontSize', FS_LEG);
     end
     xlabel('SNR (dB)', 'FontSize', FS_AXIS);
@@ -332,15 +323,6 @@ for mi = 1:numel(b)
     b(mi).EdgeColor = [0.15 0.15 0.15];
 end
 hold on; yline(1, 'k--', 'LineWidth', 1);
-for mi = 1:size(speedupMat, 1)
-    xEnd = b(mi).XEndPoints;
-    for si = 1:numel(SNR_dB)
-        if speedupMat(mi, si) >= 1; va = 'bottom'; else; va = 'top'; end
-        text(xEnd(si), speedupMat(mi, si), sprintf('%.2fx', speedupMat(mi, si)), ...
-            'HorizontalAlignment', 'center', 'VerticalAlignment', va, ...
-            'FontSize', 8, 'FontWeight', 'bold');
-    end
-end
 xlabel('SNR (dB)', 'FontSize', FS_AXIS);
 ylabel('WMMSE / method time', 'FontSize', FS_AXIS);
 title(titleText, 'FontSize', FS_TITLE);

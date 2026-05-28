@@ -1,14 +1,13 @@
-function [rho, timing] = computeRhoGNN(~, D, gainOverNoise, Pt, gnnModelPath, sigma_e)
-%computeRhoGNN GNN power allocation through a cached Python runtime.
-%   The Python side owns feature construction, PyG batching, forward, and
-%   post-processing. This keeps MATLAB-Python traffic to one call per sample
-%   and returns timing diagnostics for fair runtime plots.
+function [rho, timing] = computeRhoRL(~, D, gainOverNoise, Pt, rlModelPath, sigma_e)
+%computeRhoRL DQN/DDPG power allocation through a cached Python runtime.
+%   RL checkpoints are trained from a large-scale sum-rate reward proxy, not
+%   from WMMSE labels. Missing checkpoints fall back to EPA.
 
     totalTic = tic;
     [L, K] = size(D);
     timing = emptyTiming();
 
-    if nargin < 5 || isempty(gnnModelPath) || ~isfile(gnnModelPath)
+    if nargin < 5 || isempty(rlModelPath) || ~isfile(rlModelPath)
         rho = computeRhoEPA(D, Pt, L, K);
         timing.total_sec = toc(totalTic);
         timing.forward_sec = timing.total_sec;
@@ -20,9 +19,15 @@ function [rho, timing] = computeRhoGNN(~, D, gainOverNoise, Pt, gnnModelPath, si
 
     sqrtGain = sqrt(max(gainOverNoise, 0));
 
-    thisDir = fileparts(mfilename('fullpath'));
-    rootDir = fileparts(thisDir);
-    pyDir = fullfile(rootDir, 'python');
+    if exist('getProjectPaths', 'file') == 2
+        paths = getProjectPaths();
+        pyDir = paths.python;
+    else
+        thisDir = fileparts(mfilename('fullpath'));
+        matlabDir = fileparts(thisDir);
+        rootDir = fileparts(matlabDir);
+        pyDir = fullfile(rootDir, 'python');
+    end
 
     persistent cached_pyDir cached_runtime
     if isempty(cached_pyDir) || ~strcmp(string(cached_pyDir), string(pyDir))
@@ -36,10 +41,10 @@ function [rho, timing] = computeRhoGNN(~, D, gainOverNoise, Pt, gnnModelPath, si
     end
 
     if isempty(cached_runtime)
-        cached_runtime = py.importlib.import_module('gnn_runtime');
+        cached_runtime = py.importlib.import_module('rl_runtime');
     end
 
-    result = cached_runtime.infer(gnnModelPath, sqrtGain, D, Pt, sigma_e);
+    result = cached_runtime.infer(rlModelPath, sqrtGain, D, Pt, sigma_e);
     rho_np = result{'rho'};
     rho_np = py.numpy.ascontiguousarray(rho_np);
     rho_flat = double(py.array.array('d', py.numpy.ravel(rho_np, pyargs('order', 'C'))));
@@ -47,10 +52,9 @@ function [rho, timing] = computeRhoGNN(~, D, gainOverNoise, Pt, gnnModelPath, si
 
     timing.load_sec = pyFloat(result, 'load_sec');
     timing.feature_sec = pyFloat(result, 'feature_sec');
-    timing.collate_sec = pyFloat(result, 'collate_sec');
+    timing.collate_sec = 0;
     timing.forward_sec = pyFloat(result, 'forward_sec');
     timing.post_sec = pyFloat(result, 'post_sec');
-    timing.mix_lambda_mean = pyFloat(result, 'mix_lambda_mean');
     timing.python_total_sec = pyFloat(result, 'python_total_sec');
     timing.total_sec = toc(totalTic);
     timing.bridge_sec = max(timing.total_sec - timing.python_total_sec, 0);
@@ -65,7 +69,6 @@ function timing = emptyTiming()
         'collate_sec', 0, ...
         'forward_sec', 0, ...
         'post_sec', 0, ...
-        'mix_lambda_mean', 1, ...
         'python_total_sec', 0);
 end
 

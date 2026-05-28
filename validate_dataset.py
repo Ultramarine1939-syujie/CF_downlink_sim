@@ -3,6 +3,13 @@
 import h5py
 import numpy as np
 import sys
+from pathlib import Path
+
+PYTHON_DIR = Path(__file__).resolve().parent / "python"
+if str(PYTHON_DIR) not in sys.path:
+    sys.path.insert(0, str(PYTHON_DIR))
+
+from project_paths import TRAINING_DATA_DIR
 
 def as_lkn(arr, L, K):
     """Normalize MATLAB v7.3/HDF5 arrays to (L, K, N_snap)."""
@@ -222,9 +229,21 @@ def validate_dataset(mat_path):
         print("  Validation Complete")
         print("="*60)
 
+def latest_dataset_path():
+    candidates = sorted(
+        TRAINING_DATA_DIR.glob("gnn_training_data_*.mat"),
+        key=lambda path: path.stat().st_mtime,
+        reverse=True,
+    )
+    return candidates[0] if candidates else None
+
 if __name__ == "__main__":
     if len(sys.argv) > 1:
         mat_path = sys.argv[1]
     else:
-        mat_path = "gnn_training_data_20260426_230559.mat"
+        mat_path = latest_dataset_path()
+        if mat_path is None:
+            print(f"ERROR: no dataset found under {TRAINING_DATA_DIR}")
+            print("Usage: python validate_dataset.py path/to/gnn_training_data_*.mat")
+            sys.exit(1)
     validate_dataset(mat_path)

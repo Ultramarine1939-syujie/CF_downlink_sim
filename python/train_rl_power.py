@@ -23,6 +23,7 @@ import torch.nn as nn
 from torch.utils.data import DataLoader, Dataset, random_split
 
 from dataset import _as_lkn
+from project_paths import MODEL_DIR, TRAINING_DATA_GLOB
 
 
 DEFAULT_ACTION_ALPHAS = (-2.0, -1.5, -1.0, -0.5, 0.0, 0.5)
@@ -437,9 +438,9 @@ def save_checkpoint(path: str, **payload):
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Train DQN/DDPG RL power allocation baselines")
-    parser.add_argument("--data", required=True, help="MATLAB v7.3 training dataset")
+    parser.add_argument("--data", default=TRAINING_DATA_GLOB, help="MATLAB v7.3 training dataset")
     parser.add_argument("--method", choices=["dqn", "ddpg", "all"], default="all")
-    parser.add_argument("--output_dir", default="../models")
+    parser.add_argument("--output_dir", default=str(MODEL_DIR))
     parser.add_argument("--epochs", type=int, default=50)
     parser.add_argument("--batch_size", type=int, default=32)
     parser.add_argument("--hidden_dim", type=int, default=256)

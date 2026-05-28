@@ -14,6 +14,7 @@ opts = parseOptions(varargin{:});
 scriptDir = fileparts(mfilename('fullpath'));
 rootDir = fileparts(scriptDir);
 addpath(genpath(rootDir));
+paths = getProjectPaths();
 params = getDefaultParams();
 
 L = params.system.L;
@@ -28,12 +29,12 @@ nIter = params.csi.nIter;
 nbrOfRealizations = params.simulation.nbrOfRealizations;
 numScenarios = min(params.simulation.numScenarios, opts.maxScenarios);
 
-dataPath = fullfile(scriptDir, params.output.dataPath);
-savePath = fullfile(scriptDir, params.output.savePath);
+dataPath = fullfile(paths.outputRoot, params.output.dataPath);
+savePath = fullfile(paths.outputRoot, params.output.savePath);
 if ~exist(dataPath, 'dir'); mkdir(dataPath); end
 if ~exist(savePath, 'dir'); mkdir(savePath); end
 
-ugnnModelPath = fullfile(rootDir, params.gnn.ugnnModelFile);
+ugnnModelPath = fullfile(paths.root, params.gnn.ugnnModelFile);
 if ~isfile(ugnnModelPath)
     error('U-GNN checkpoint not found: %s', ugnnModelPath);
 end

@@ -21,6 +21,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import ConcatDataset, DataLoader, Dataset, random_split
+from project_paths import MODEL_DIR, TRAINING_DATA_GLOB
 
 @dataclass
 class LocalFeatureConfig:
@@ -256,8 +257,8 @@ def load_local_dataset(pattern: str, L: int, K: int) -> Dataset:
 
 def main(argv: Iterable[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description="Train strict AP-local power allocation MLP")
-    parser.add_argument("--data", type=str, default="../data/gnn_training/*.mat")
-    parser.add_argument("--output_dir", type=str, default="../models")
+    parser.add_argument("--data", type=str, default=TRAINING_DATA_GLOB)
+    parser.add_argument("--output_dir", type=str, default=str(MODEL_DIR))
     parser.add_argument("--epochs", type=int, default=120)
     parser.add_argument("--batch_size", type=int, default=512)
     parser.add_argument("--lr", type=float, default=1e-3)

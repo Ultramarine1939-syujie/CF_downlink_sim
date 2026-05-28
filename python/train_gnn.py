@@ -17,6 +17,7 @@ from torch.utils.data import DataLoader, random_split
 
 from torch_geometric.nn import GATConv
 from torch_geometric.data import Data, Batch
+from project_paths import MODEL_DIR, TRAINING_DATA_GLOB
 
 
 def _build_bipartite_edges(item, L, K, dynamic_top_z=None):
@@ -660,7 +661,7 @@ def main():
 
     parser = argparse.ArgumentParser(description='Train GNN Power Allocation Model with GATConv')
     parser.add_argument('--data', type=str,
-                        default='../data/gnn_training/*.mat',
+                        default=TRAINING_DATA_GLOB,
                         help='Path to training data')
     parser.add_argument('--epochs', type=int, default=300, help='Number of epochs')
     parser.add_argument('--batch_size', type=int, default=32, help='Batch size')
@@ -670,7 +671,7 @@ def main():
     parser.add_argument('--num_layers', type=int, default=3, help='Number of GAT layers')
     parser.add_argument('--dropout', type=float, default=0.1, help='Dropout rate')
     parser.add_argument('--val_split', type=float, default=0.15, help='Validation split ratio')
-    parser.add_argument('--output_dir', type=str, default='../models', help='Output directory')
+    parser.add_argument('--output_dir', type=str, default=str(MODEL_DIR), help='Output directory')
     parser.add_argument('--patience', type=int, default=50, help='Early stopping patience (in epochs)')
     parser.add_argument('--model_type', type=str, default='gat', choices=['gat', 'dcgnn'],
                         help='gat uses all DCC AP-UE edges; dcgnn keeps dynamic top-z dominant edges')

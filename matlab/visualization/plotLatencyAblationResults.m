@@ -93,12 +93,6 @@ hold(axA52, 'on');
 rankColors = paColors(rankPAIdx, :);
 b = bar(axA52, 1:numel(rankPAIdx), bestESRByPA(rankPAIdx), 0.62, 'FaceColor', 'flat');
 b.CData = rankColors;
-for ri = 1:numel(rankPAIdx)
-    pi = rankPAIdx(ri);
-    text(axA52, ri, bestESRByPA(pi) + 0.12, ...
-        sprintf('control %.3g ms\ncompute %.3g ms', bestDelayByPA(pi), bestComputeByPA(pi)), ...
-        'HorizontalAlignment', 'center', 'FontSize', 8);
-end
 set(axA52, 'XTick', 1:numel(rankPAIdx), 'XTickLabel', cellstr(bestLabelByPA(rankPAIdx)), ...
     'XTickLabelRotation', 20, 'FontSize', 11);
 ylabel('Average ESR (bit/s/Hz)');

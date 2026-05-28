@@ -21,6 +21,7 @@ import torch.optim as optim
 from torch.utils.data import ConcatDataset, DataLoader, Subset, random_split
 
 from dataset import GNNDataset
+from project_paths import MODEL_DIR, TRAINING_DATA_GLOB
 from train_gnn import PowerGNN_GAT, custom_collate
 
 
@@ -454,7 +455,7 @@ def load_dataset(pattern: str):
 
 def main():
     parser = argparse.ArgumentParser(description="Train U-GNN without WMMSE labels")
-    parser.add_argument("--data", type=str, default="../data/gnn_training/*.mat")
+    parser.add_argument("--data", type=str, default=TRAINING_DATA_GLOB)
     parser.add_argument("--epochs", type=int, default=120)
     parser.add_argument("--batch_size", type=int, default=32)
     parser.add_argument("--lr_max", type=float, default=3e-4)
@@ -487,7 +488,7 @@ def main():
     parser.add_argument("--pure_unsup", action="store_true")
     parser.add_argument("--distill_weight", type=float, default=0.0)
     parser.add_argument("--teacher_temperature", type=float, default=1.0)
-    parser.add_argument("--output_dir", type=str, default="../models")
+    parser.add_argument("--output_dir", type=str, default=str(MODEL_DIR))
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--max_samples", type=int, default=0,
                         help="Optional cap for smoke tests; 0 uses the full dataset")

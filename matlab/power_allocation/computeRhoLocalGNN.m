@@ -20,9 +20,15 @@ function [rho, timing] = computeRhoLocalGNN(~, D, gainOverNoise, Pt, localModelP
 
     sqrtGain = sqrt(max(gainOverNoise, 0));
 
-    thisDir = fileparts(mfilename('fullpath'));
-    rootDir = fileparts(thisDir);
-    pyDir = fullfile(rootDir, 'python');
+    if exist('getProjectPaths', 'file') == 2
+        paths = getProjectPaths();
+        pyDir = paths.python;
+    else
+        thisDir = fileparts(mfilename('fullpath'));
+        matlabDir = fileparts(thisDir);
+        rootDir = fileparts(matlabDir);
+        pyDir = fullfile(rootDir, 'python');
+    end
 
     persistent cached_pyDir cached_runtime
     if isempty(cached_pyDir) || ~strcmp(string(cached_pyDir), string(pyDir))

@@ -7,6 +7,7 @@ import h5py
 import numpy as np
 import torch
 from torch.utils.data import Dataset as TorchDataset
+from project_paths import TRAINING_DATA_DIR
 
 
 def _as_lkn(arr, L, K, name):
@@ -414,7 +415,14 @@ if __name__ == "__main__":
     if len(sys.argv) > 1:
         mat_path = sys.argv[1]
     else:
-        mat_path = "../data/gnn_training/gnn_training_data_20260426_230559.mat"
+        candidates = sorted(
+            TRAINING_DATA_DIR.glob("gnn_training_data_*.mat"),
+            key=lambda path: path.stat().st_mtime,
+            reverse=True,
+        )
+        if not candidates:
+            raise SystemExit(f"No dataset found under {TRAINING_DATA_DIR}")
+        mat_path = candidates[0]
 
     print("="*60)
     print("Exploring dataset structure...")
