@@ -14,3 +14,6 @@ numpy>=1.24.0
 
 # HDF5 reader for MATLAB v7.3 .mat files
 h5py>=3.8.0
+
+# Pure-Python simulation output plots
+matplotlib>=3.7.0

@@ -1,11 +1,14 @@
 # CF_downlink_sim
 
-Cell-Free Massive MIMO 下行链路仿真项目，用 MATLAB 完成无线链路仿真与性能评估，用 Python 训练和推理 GNN/RL 功率分配模型。
+Cell-Free Massive MIMO 下行链路仿真项目。当前已经支持两套运行方式：
+
+- 纯 Python：信道生成、预编码、SE 计算、传统/学习功率分配、训练数据导出都在 Python 内完成，避免 MATLAB-Python bridge 开销。
+- 兼容 MATLAB：保留原 MATLAB 仿真脚本，便于和历史结果对照。
 
 当前项目已经按语言分层整理：
 
 - `matlab/`：MATLAB 仿真源码。
-- `python/`：Python 训练和推理源码。
+- `python/`：Python 仿真、训练、推理源码。
 - `data/`：训练数据。
 - `models/`：模型权重。
 - `main/SimulationData/`：仿真缓存和数值结果。
@@ -29,6 +32,11 @@ start_project.bat
 - `6` 验证最新训练数据集。
 - `7` 快速导出训练数据。
 - `8` 打开 MATLAB GUI 并自动加入项目源码路径。
+- `9` 纯 Python 主仿真。
+- `10` 纯 Python 快速导出训练数据。
+- `11` 纯 Python 烟测。
+- `12` 纯 Python 完整流程：Python 数据导出、验证、训练/复用模型、纯 Python 仿真。
+- `13` 纯 Python 小数据完整流程：与 `12` 相同，但数据量和训练轮数更小，适合快速测试。
 - `C` 环境检查。
 
 也可以直接带参数运行：
@@ -36,6 +44,9 @@ start_project.bat
 ```bat
 start_project.bat C /y
 start_project.bat 3 /y
+start_project.bat 9 /y
+start_project.bat 12 /y
+start_project.bat 13 /y
 start_project.bat 6 /y
 start_project.bat 1 /y
 ```
@@ -49,6 +60,8 @@ start_project.bat 1 /y
 - Python 3.10 或更高版本。
 - Python 依赖见 `python/requirements.txt`。
 - 训练 GNN/RL 模型时建议有 CUDA GPU；仅仿真和烟测可以不用 GPU。
+
+如果只运行纯 Python 仿真或纯 Python 数据导出，MATLAB 不再是必需项。
 
 安装 Python 依赖：
 
@@ -71,6 +84,19 @@ start_project.bat C /y
 start_project.bat 3 /y
 ```
 
+纯 Python 主仿真：
+
+```bat
+start_project.bat 9 /y
+```
+
+也可以直接运行：
+
+```bat
+python python\run_python_sim.py
+python python\run_python_sim.py --num-scenarios 1 --realizations 20 --snr-db 5 10 --pa baseline,FPCP,GNN,LocalGNN --pc MR,RMMSE
+```
+
 验证最新训练数据：
 
 ```bat
@@ -82,6 +108,33 @@ start_project.bat 6 /y
 ```bat
 start_project.bat 7 /y
 ```
+
+纯 Python 快速导出：
+
+```bat
+start_project.bat 10 /y
+python python\export_training_data_py.py --snapshots-per-snr 2
+```
+
+纯 Python 完整流程：
+
+```bat
+start_project.bat 12 /y
+```
+
+该流程会依次执行：Python 生成训练数据、验证最新数据集、训练或复用 `models/` 中已有模型、运行纯 Python 烟测、运行纯 Python 主仿真。已有模型默认复用；如需强制重训，加 `/retrain`：
+
+```bat
+start_project.bat 12 /y /retrain
+```
+
+纯 Python 小数据完整流程：
+
+```bat
+start_project.bat 13 /y /retrain
+```
+
+该流程和 `12` 相同，但默认只导出每个 SNR 2 个快照、训练 3 个 epoch，并用 `1` 个场景、`10` 个信道实现、完整默认 SNR 扫描跑小规模 Python 主仿真。若已安装 `matplotlib`，会输出 Python 图像到 `main/Imgs/`。
 
 快速完整流程：
 

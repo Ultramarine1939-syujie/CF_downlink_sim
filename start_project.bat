@@ -58,11 +58,26 @@ echo.
 echo   [8] Open MATLAB GUI
 echo       add matlab\ source tree to MATLAB path
 echo.
+echo   [9] Python simulation only
+echo       pure Python channel/precoding/SE/PA loop, no MATLAB bridge
+echo.
+echo   [10] Python quick data export
+echo       export 2 snapshots per SNR using Python only
+echo.
+echo   [11] Python smoke tests
+echo       run a small pure-Python simulation and dataset export check
+echo.
+echo   [12] Python full workflow
+echo       Python data export + validation + training + Python simulation
+echo.
+echo   [13] Python quick full workflow
+echo       small Python data export + short training + small Python simulation
+echo.
 echo   [C] Environment check
 echo   [Q] Quit
 echo ============================================================
 echo.
-set /p MODE="Select [1/2/3/4/5/6/7/8/C/Q]: "
+set /p MODE="Select [1/2/3/4/5/6/7/8/9/10/11/12/13/C/Q]: "
 
 :dispatch
 if /i "%MODE%"=="Q" exit /b 0
@@ -89,6 +104,36 @@ if /i "%MODE%"=="5" goto :smoketests
 if /i "%MODE%"=="6" goto :validate
 if /i "%MODE%"=="7" goto :exportquick
 if /i "%MODE%"=="8" goto :matlabgui
+if /i "%MODE%"=="9" goto :simulation_py
+if /i "%MODE%"=="PY" goto :simulation_py
+if /i "%MODE%"=="10" goto :exportquick_py
+if /i "%MODE%"=="PYE" goto :exportquick_py
+if /i "%MODE%"=="11" goto :smoketests_py
+if /i "%MODE%"=="PYS" goto :smoketests_py
+if /i "%MODE%"=="12" (
+    set "SNAPSHOTS_PER_SNR="
+    set "TRAIN_EPOCHS=100"
+    set "PY_SIM_ARGS="
+    goto :fullworkflow_py
+)
+if /i "%MODE%"=="PYFULL" (
+    set "SNAPSHOTS_PER_SNR="
+    set "TRAIN_EPOCHS=100"
+    set "PY_SIM_ARGS="
+    goto :fullworkflow_py
+)
+if /i "%MODE%"=="13" (
+    set "SNAPSHOTS_PER_SNR=2"
+    set "TRAIN_EPOCHS=3"
+    set "PY_SIM_ARGS=--num-scenarios 1 --realizations 10 --no-cache"
+    goto :fullworkflow_py
+)
+if /i "%MODE%"=="PYQUICK" (
+    set "SNAPSHOTS_PER_SNR=2"
+    set "TRAIN_EPOCHS=3"
+    set "PY_SIM_ARGS=--num-scenarios 1 --realizations 10 --no-cache"
+    goto :fullworkflow_py
+)
 if /i "%MODE%"=="C" goto :envcheck
 if /i "%MODE%"=="c" goto :envcheck
 
@@ -137,6 +182,52 @@ echo ============================================================
 matlab -batch "cd('%PROJECT_ROOT%'); addpath(genpath(fullfile(pwd,'matlab'))); paths=getProjectPaths(); cd(paths.main); Combined_Downlink_Sim;"
 goto :finish
 
+:fullworkflow_py
+call :require_python || goto :fail
+
+echo.
+echo ============================================================
+echo   [1/5] Python export training data
+echo ============================================================
+if defined SNAPSHOTS_PER_SNR (
+    python "%PYTHON_DIR%\export_training_data_py.py" --snapshots-per-snr %SNAPSHOTS_PER_SNR%
+) else (
+    python "%PYTHON_DIR%\export_training_data_py.py"
+)
+if errorlevel 1 goto :finish
+
+echo.
+echo ============================================================
+echo   [2/5] Validate latest dataset
+echo ============================================================
+python validate_dataset.py
+if errorlevel 1 goto :finish
+call :find_latest_data || goto :fail
+
+echo.
+echo ============================================================
+echo   [3/5] Train or reuse models
+echo ============================================================
+call :train_models || goto :finish
+
+echo.
+echo ============================================================
+echo   [4/5] Python smoke tests
+echo ============================================================
+python "%PYTHON_DIR%\run_python_sim.py" --num-scenarios 1 --realizations 2 --snr-db 5 --pa baseline,EPA,GNN,LocalGNN --pc MR --no-cache --no-fig --no-data --no-sync-ablation
+if errorlevel 1 goto :finish
+
+echo.
+echo ============================================================
+echo   [5/5] Python main simulation
+echo ============================================================
+if defined PY_SIM_ARGS (
+    python "%PYTHON_DIR%\run_python_sim.py" %PY_SIM_ARGS%
+) else (
+    python "%PYTHON_DIR%\run_python_sim.py"
+)
+goto :finish
+
 :simulation
 call :require_matlab || goto :fail
 echo [INFO] Starting main simulation...
@@ -172,6 +263,27 @@ goto :finish
 :matlabgui
 call :require_matlab || goto :fail
 start "" matlab -r "cd('%PROJECT_ROOT%'); addpath(genpath(fullfile(pwd,'matlab'))); disp('CF_downlink_sim ready. Run run.m or start_project.bat.');"
+goto :finish
+
+:simulation_py
+call :require_python || goto :fail
+echo [INFO] Starting pure-Python main simulation...
+python "%PYTHON_DIR%\run_python_sim.py"
+goto :finish
+
+:exportquick_py
+call :require_python || goto :fail
+echo [INFO] Exporting a small pure-Python training dataset...
+python "%PYTHON_DIR%\export_training_data_py.py" --snapshots-per-snr 2
+goto :finish
+
+:smoketests_py
+call :require_python || goto :fail
+echo [INFO] Pure-Python simulation smoke test...
+python "%PYTHON_DIR%\run_python_sim.py" --num-scenarios 1 --realizations 2 --snr-db 5 --pa baseline,EPA,GNN,LocalGNN --pc MR --no-cache --no-fig --no-data --no-sync-ablation
+if errorlevel 1 goto :finish
+echo [INFO] Pure-Python dataset export smoke test...
+python "%PYTHON_DIR%\export_training_data_py.py" --snapshots-per-snr 1 --snr-db 5 --realizations 2 --setups 1 --output-dir "%TEMP%\CF_downlink_sim_py_smoke"
 goto :finish
 
 :envcheck

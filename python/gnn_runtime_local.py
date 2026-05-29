@@ -93,18 +93,13 @@ def infer(model_path, sqrt_gain, D_mask, Pt=1.0, sigma_e=0.3):
     forward_sec = time.perf_counter() - forward_t0
 
     post_t0 = time.perf_counter()
-    rho = np.zeros((L, K), dtype=np.float64)
     served_count = D.sum(axis=1, keepdims=True)
     valid_rows = served_count[:, 0] > 0
-    rho[valid_rows, :] = Pt * share[valid_rows, :] * D[valid_rows, :]
-
-    empty_rows = ~valid_rows
-    if np.any(empty_rows):
-        rho[empty_rows, :] = 0.0
-
-    row_sum = rho.sum(axis=1, keepdims=True)
     fallback = Pt * D / np.maximum(served_count, 1.0)
-    rho = np.where((row_sum > 0) & valid_rows[:, None], Pt * rho / np.maximum(row_sum, 1e-12), fallback)
+
+    # share from softmax already sums to 1 per row; scale by Pt
+    row_sum = (share * D).sum(axis=1, keepdims=True)
+    rho = np.where(row_sum > 0, Pt * share * D / np.maximum(row_sum, 1e-12), fallback)
     rho = rho.astype(np.float64, copy=False)
     post_sec = time.perf_counter() - post_t0
 

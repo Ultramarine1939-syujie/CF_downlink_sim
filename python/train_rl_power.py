@@ -150,14 +150,21 @@ def fpcp_shares(sqrt_gain: torch.Tensor, d_mask: torch.Tensor, alpha: float) -> 
 
 
 def proxy_sum_rate(shares: torch.Tensor, sqrt_gain: torch.Tensor, d_mask: torch.Tensor,
-                   pt: float) -> torch.Tensor:
+                   pt) -> torch.Tensor:
     """Large-scale reward proxy for one-step RL training.
 
     The full simulation still evaluates exact SE with the existing MATLAB
     routines.  This proxy gives DQN/DDPG a label-free training signal.
-    """
 
-    rho = pt * shares * d_mask
+    Args:
+        pt: scalar float OR per-sample tensor of shape (batch, 1) or (batch, 1, 1).
+    """
+    if isinstance(pt, torch.Tensor):
+        pt_t = pt.view(-1, 1, 1)
+    else:
+        pt_t = pt
+
+    rho = pt_t * shares * d_mask
     gain = sqrt_gain.square().clamp_min(0.0)
     desired = (rho * gain).sum(dim=1)
     ap_total_power = rho.sum(dim=2, keepdim=True)
@@ -252,10 +259,11 @@ def train_dqn(args, dataset: RLDataset, device: torch.device, state_dim: int):
         for batch in train_loader:
             batch = batch_to_device(batch, device)
             state = build_state(batch["sqrt_gain"], batch["D"], batch["snr_db"], batch["sigma_e"])
+            pt_batch = torch.pow(10.0, batch["snr_db"].view(-1, 1) / 10.0)
             target_rewards = []
             for alpha in action_alphas:
                 shares = fpcp_shares(batch["sqrt_gain"], batch["D"], alpha)
-                target_rewards.append(proxy_sum_rate(shares, batch["sqrt_gain"], batch["D"], args.pt))
+                target_rewards.append(proxy_sum_rate(shares, batch["sqrt_gain"], batch["D"], pt_batch))
             target = torch.stack(target_rewards, dim=1)
             target = (target - target.mean(dim=1, keepdim=True)) / target.std(dim=1, keepdim=True).clamp_min(1.0e-4)
             q_pred = model(state)
@@ -266,7 +274,7 @@ def train_dqn(args, dataset: RLDataset, device: torch.device, state_dim: int):
             opt.step()
             train_loss += float(loss.detach()) * state.size(0)
 
-        val_reward = evaluate_dqn(model, val_loader, action_alphas, args.pt, device)
+        val_reward = evaluate_dqn(model, val_loader, action_alphas, device)
         train_loss /= max(1, len(train_loader.dataset))
         print(f"[DQN] epoch {epoch:03d} loss={train_loss:.5f} val_reward={val_reward:.5f}")
 
@@ -300,19 +308,20 @@ def train_dqn(args, dataset: RLDataset, device: torch.device, state_dim: int):
 
 
 @torch.no_grad()
-def evaluate_dqn(model: nn.Module, loader: Iterable, action_alphas: list[float], pt: float,
+def evaluate_dqn(model: nn.Module, loader: Iterable, action_alphas: list[float],
                  device: torch.device) -> float:
     model.eval()
     rewards = []
     for batch in loader:
         batch = batch_to_device(batch, device)
         state = build_state(batch["sqrt_gain"], batch["D"], batch["snr_db"], batch["sigma_e"])
+        pt_batch = torch.pow(10.0, batch["snr_db"].view(-1, 1) / 10.0)
         q = model(state)
         actions = torch.argmax(q, dim=1)
         batch_rewards = []
         for i, alpha in enumerate(action_alphas):
             shares = fpcp_shares(batch["sqrt_gain"], batch["D"], alpha)
-            reward = proxy_sum_rate(shares, batch["sqrt_gain"], batch["D"], pt)
+            reward = proxy_sum_rate(shares, batch["sqrt_gain"], batch["D"], pt_batch)
             batch_rewards.append(torch.where(actions == i, reward, torch.zeros_like(reward)))
         rewards.append(torch.stack(batch_rewards, dim=0).sum(dim=0).detach().cpu())
     return float(torch.cat(rewards).mean()) if rewards else 0.0
@@ -341,10 +350,11 @@ def train_ddpg(args, dataset: RLDataset, device: torch.device, state_dim: int):
         for batch in train_loader:
             batch = batch_to_device(batch, device)
             state = build_state(batch["sqrt_gain"], batch["D"], batch["snr_db"], batch["sigma_e"])
+            pt_batch = torch.pow(10.0, batch["snr_db"].view(-1, 1) / 10.0)
 
             with torch.no_grad():
                 policy_shares = actor(state, batch["D"], batch["sqrt_gain"])
-                reward = proxy_sum_rate(policy_shares, batch["sqrt_gain"], batch["D"], args.pt)
+                reward = proxy_sum_rate(policy_shares, batch["sqrt_gain"], batch["D"], pt_batch)
             q_pred = critic(state, policy_shares.detach())
             critic_loss = nn.functional.mse_loss(q_pred, reward)
             critic_opt.zero_grad()
@@ -354,7 +364,7 @@ def train_ddpg(args, dataset: RLDataset, device: torch.device, state_dim: int):
 
             policy_shares = actor(state, batch["D"], batch["sqrt_gain"])
             q_policy = critic(state, policy_shares)
-            reward_policy = proxy_sum_rate(policy_shares, batch["sqrt_gain"], batch["D"], args.pt)
+            reward_policy = proxy_sum_rate(policy_shares, batch["sqrt_gain"], batch["D"], pt_batch)
             entropy = masked_entropy(policy_shares, batch["D"])
             anchor = fpcp_shares(batch["sqrt_gain"], batch["D"], args.ddpg_anchor_alpha)
             anchor_loss = nn.functional.mse_loss(policy_shares, anchor)
@@ -370,7 +380,7 @@ def train_ddpg(args, dataset: RLDataset, device: torch.device, state_dim: int):
             critic_loss_total += float(critic_loss.detach()) * state.size(0)
             actor_loss_total += float(actor_loss.detach()) * state.size(0)
 
-        val_reward = evaluate_actor(actor, val_loader, args.pt, device)
+        val_reward = evaluate_actor(actor, val_loader, device)
         n_train = max(1, len(train_loader.dataset))
         print(
             f"[DDPG] epoch {epoch:03d} critic_loss={critic_loss_total/n_train:.5f} "
@@ -413,14 +423,15 @@ def train_ddpg(args, dataset: RLDataset, device: torch.device, state_dim: int):
 
 
 @torch.no_grad()
-def evaluate_actor(actor: DDPGActor, loader: Iterable, pt: float, device: torch.device) -> float:
+def evaluate_actor(actor: DDPGActor, loader: Iterable, device: torch.device) -> float:
     actor.eval()
     rewards = []
     for batch in loader:
         batch = batch_to_device(batch, device)
         state = build_state(batch["sqrt_gain"], batch["D"], batch["snr_db"], batch["sigma_e"])
+        pt_batch = torch.pow(10.0, batch["snr_db"].view(-1, 1) / 10.0)
         shares = actor(state, batch["D"], batch["sqrt_gain"])
-        rewards.append(proxy_sum_rate(shares, batch["sqrt_gain"], batch["D"], pt).detach().cpu())
+        rewards.append(proxy_sum_rate(shares, batch["sqrt_gain"], batch["D"], pt_batch).detach().cpu())
     return float(torch.cat(rewards).mean()) if rewards else 0.0
 
 

@@ -15,8 +15,13 @@ function rho_dist = computeRhoDist(D, gainOverNoise, Pt, L, K)
         servedUEs = find(D(l, :) == 1);
         if isempty(servedUEs); continue; end
         normFactor = sum(sqrt(gainOverNoise(l, servedUEs)));
-        for k = servedUEs
-            rho_dist(l, k) = Pt * sqrt(gainOverNoise(l, k)) / normFactor;
+        if normFactor <= 0 || ~isfinite(normFactor)
+            % Fallback to EPA when all gains are zero (avoids NaN)
+            rho_dist(l, servedUEs) = Pt / numel(servedUEs);
+        else
+            for k = servedUEs
+                rho_dist(l, k) = Pt * sqrt(gainOverNoise(l, k)) / normFactor;
+            end
         end
     end
 end
