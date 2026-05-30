@@ -4,7 +4,7 @@
 The model is intentionally strict-local: each training item is one AP row.
 Inputs contain only that AP's AP-UE association row, masked large-scale gain
 row, SNR, CSI-error scalar, and simple row statistics. The target is the
-WMMSE power share inside the same AP row.
+D-WMMSE power share inside the same AP row.
 """
 
 from __future__ import annotations
@@ -21,7 +21,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import ConcatDataset, DataLoader, Dataset, random_split
-from project_paths import MODEL_DIR, TRAINING_DATA_GLOB
+from config import MODEL_DIR, TRAINING_DATA_GLOB
 
 @dataclass
 class LocalFeatureConfig:
@@ -172,7 +172,7 @@ class LocalAPDataset(Dataset):
 
 
 def masked_share_loss(logits: torch.Tensor, target: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
-    """MSE between masked softmax shares and WMMSE target shares."""
+    """MSE between masked softmax shares and D-WMMSE target shares."""
     valid_rows = mask.sum(dim=1) > 0
     if not torch.any(valid_rows):
         return logits.sum() * 0.0
@@ -330,7 +330,7 @@ def main(argv: Iterable[str] | None = None) -> None:
         "num_layers": args.num_layers,
         "dropout": args.dropout,
         "feature_schema": "ap_local_masked_gain_dmask_snr_sigma_degree_gainstats_v1",
-        "target": "per_ap_wmmse_power_share",
+        "target": "per_ap_dwmmse_power_share",
         "val_loss": best_loss,
         "val_corr": best_corr,
         "args": vars(args),

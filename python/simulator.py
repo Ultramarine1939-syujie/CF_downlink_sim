@@ -66,7 +66,6 @@ def default_params() -> dict[str, Any]:
             "dataPath": "SimulationData",
             "cleanOldFigures": True,
         },
-        "wmmse": {"maxIter": 30, "simMaxIter": 20, "tol": 1e-4},
         "dwmmse": {"rounds": 5, "damping": 0.6},
         "fpcp": {"alpha": -1.0},
         "syncAblation": {
@@ -90,10 +89,9 @@ def default_params() -> dict[str, Any]:
             "rlLayers": 3,
         },
         "gnn": {
-            "fullModelFile": Path("models") / "best_gat_gnn_power.pt",
+            "fullModelFile": Path("models") / "best_local_gnn_power.pt",
             "localModelFile": Path("models") / "best_local_gnn_power.pt",
             "dcgnnModelFile": Path("models") / "best_dcgnn_power.pt",
-            "ugnnModelFile": Path("models") / "best_ugnn_power.pt",
         },
         "rl": {
             "dqnModelFile": Path("models") / "best_dqn_power.pt",
@@ -607,7 +605,7 @@ def compute_rho_random(scaling: np.ndarray, D: np.ndarray, Pt: float, rng: np.ra
     ap_power = (scaling * D) @ d2
     eta = np.zeros(L)
     nonzero = ap_power > 0
-    eta[nonzero] = np.sqrt((Pt / L) / ap_power[nonzero])
+    eta[nonzero] = np.sqrt(Pt / ap_power[nonzero])
     return (eta[:, None] ** 2) * (scaling * D) * d2[None, :]
 
 
@@ -641,152 +639,6 @@ def enforce_per_ap_power(rho: np.ndarray, D: np.ndarray, Pt: float) -> np.ndarra
     over = row_power[:, 0] > Pt
     if np.any(over):
         rho[over, :] *= Pt / np.maximum(row_power[over], EPS)
-    return rho
-
-
-def build_effective_channel(Hhat: np.ndarray, N: int, K: int, L: int, nbr: int) -> np.ndarray:
-    H_eff = np.zeros((K, L), dtype=np.float64)
-    for l in range(L):
-        rows = slice(l * N, (l + 1) * N)
-        for k in range(K):
-            H_lk = Hhat[rows, :nbr, k]
-            H_eff[k, l] = np.sqrt(max(float(np.mean(np.sum(np.abs(H_lk) ** 2, axis=0))), 0.0))
-    return H_eff
-
-
-def compute_equiv_sinr(H_eff: np.ndarray, V: np.ndarray) -> np.ndarray:
-    HV = H_eff @ V
-    desired = np.abs(np.diag(HV)) ** 2
-    interf = np.maximum(np.sum(np.abs(HV) ** 2, axis=1) - desired, 0.0)
-    return desired / np.maximum(interf + 1.0, EPS)
-
-
-def compute_equiv_rate(H_eff: np.ndarray, V: np.ndarray) -> float:
-    return float(np.sum(np.log2(1.0 + compute_equiv_sinr(H_eff, V))))
-
-
-def project_per_ap(V: np.ndarray, D: np.ndarray, Pt: float) -> np.ndarray:
-    out = V * D
-    row_power = np.sum(np.abs(out) ** 2, axis=1, keepdims=True)
-    over = row_power[:, 0] > Pt
-    if np.any(over):
-        out[over, :] *= np.sqrt(Pt / np.maximum(row_power[over], EPS))
-    return out
-
-
-def solve_for_lambda(A: np.ndarray, B: np.ndarray, D: np.ndarray, lam: np.ndarray, reg: float) -> np.ndarray:
-    L, K = D.shape
-    A_lam = A + np.diag(lam) + reg * np.eye(L)
-    V = np.zeros((L, K), dtype=np.complex128)
-    if np.all(D > 0.5):
-        return np.linalg.solve(A_lam, B)
-    for k in range(K):
-        served = np.where(D[:, k] > 0.5)[0]
-        if served.size:
-            V[served, k] = np.linalg.solve(A_lam[np.ix_(served, served)], B[served, k])
-    return V
-
-
-def solve_transmit_update(
-    A: np.ndarray,
-    B: np.ndarray,
-    D: np.ndarray,
-    Pt: float,
-    max_dual_iter: int,
-    reg: float,
-) -> np.ndarray:
-    L, _ = D.shape
-    lam = np.zeros(L)
-    diag_scale = max(float(np.real(np.trace(A))) / max(L, 1), 1e-6)
-    step0 = diag_scale / max(Pt, 1.0)
-    V = np.zeros_like(B, dtype=np.complex128)
-    for dual_iter in range(1, max_dual_iter + 1):
-        V = solve_for_lambda(A, B, D, lam, reg)
-        row_power = np.sum(np.abs(V) ** 2, axis=1)
-        violation = row_power - Pt
-        if np.max(violation) <= max(1e-6, 1e-5 * Pt):
-            break
-        lam = np.maximum(0.0, lam + (step0 / np.sqrt(dual_iter)) * violation)
-    return project_per_ap(V, D, Pt)
-
-
-def accept_monotone_update(
-    H_eff: np.ndarray,
-    V_old: np.ndarray,
-    V_candidate: np.ndarray,
-    D: np.ndarray,
-    Pt: float,
-    prev_rate: float,
-) -> tuple[np.ndarray, float]:
-    alpha = 1.0
-    while alpha >= 1e-3:
-        trial = project_per_ap((1.0 - alpha) * V_old + alpha * V_candidate, D, Pt)
-        rate = compute_equiv_rate(H_eff, trial)
-        if rate >= prev_rate - 1e-9:
-            return trial, rate
-        alpha *= 0.5
-    return V_old, prev_rate
-
-
-def compute_rho_wmmse(
-    Hhat: np.ndarray,
-    D: np.ndarray,
-    Pt: float,
-    N: int,
-    K: int,
-    L: int,
-    nbr: int,
-    max_iter: int = 30,
-    tol: float = 1e-4,
-    verbose: bool = False,
-) -> tuple[np.ndarray, int]:
-    D_bin = (D > 0.5).astype(float)
-    if Hhat.size == 0 or np.all(D_bin == 0):
-        return compute_rho_epa(D_bin, Pt), 0
-
-    H_eff = build_effective_channel(Hhat, N, K, L, nbr)
-    rho0 = compute_rho_dist(D_bin, H_eff.T, Pt)
-    rho0[~np.isfinite(rho0)] = 0.0
-    V = project_per_ap(np.sqrt(np.maximum(rho0, 0.0)) * D_bin, D_bin, Pt)
-    prev_rate = compute_equiv_rate(H_eff, V)
-    best_rate = prev_rate
-    best_V = V.copy()
-    reg = 1e-6 * max(float(np.real(np.trace(H_eff.conj().T @ H_eff))) / max(L, 1), 1.0)
-
-    for it in range(1, max_iter + 1):
-        V_old = V.copy()
-        HV = H_eff @ V
-        total_rx = np.sum(np.abs(HV) ** 2, axis=1) + 1.0
-        desired = np.diag(HV)
-        u = desired / np.maximum(total_rx, EPS)
-        mse = 1.0 - 2.0 * np.real(np.conj(u) * desired) + np.abs(u) ** 2 * total_rx
-        mse = np.maximum(np.real(mse), 1e-12)
-        w = 1.0 / mse
-        A = H_eff.conj().T @ (np.diag(w * np.abs(u) ** 2) @ H_eff)
-        A = (A + A.conj().T) / 2.0 + reg * np.eye(L)
-        B = H_eff.conj().T @ np.diag(w * np.conj(u))
-        candidate = solve_transmit_update(A, B, D_bin, Pt, 25, reg)
-        V, rate = accept_monotone_update(H_eff, V_old, candidate, D_bin, Pt, prev_rate)
-
-        power_change = np.linalg.norm(V.ravel() - V_old.ravel()) / max(np.linalg.norm(V_old.ravel()), EPS)
-        rate_change = abs(rate - prev_rate) / max(abs(prev_rate), 1.0)
-        if rate > best_rate:
-            best_rate = rate
-            best_V = V.copy()
-        if verbose and (it == 1 or it % 5 == 0):
-            sinr = compute_equiv_sinr(H_eff, V)
-            preview = ", ".join(f"{x:.2f}" for x in sinr[:3])
-            print(f"    [WMMSE] Iter {it:2d}: WSR={rate:.4f}, PowerChange={power_change:.6f}, SINR=[{preview}]")
-        if it > 1 and (power_change < tol or rate_change < tol):
-            return finalize_rho(best_V, D_bin, Pt), it
-        prev_rate = rate
-    return finalize_rho(best_V, D_bin, Pt), max_iter
-
-
-def finalize_rho(V: np.ndarray, D: np.ndarray, Pt: float) -> np.ndarray:
-    rho = np.abs(V) ** 2 * D
-    rho = enforce_per_ap_power(rho, D, Pt)
-    rho[~np.isfinite(rho)] = 0.0
     return rho
 
 
@@ -827,15 +679,15 @@ def compute_rho_gnn(
         timing["forward_sec"] = timing["total_sec"]
         return compute_rho_epa(D, Pt), timing
     try:
-        import gnn_runtime
+        import gnn_inference
 
-        out = gnn_runtime.infer(str(model_path), np.sqrt(np.maximum(gain_over_noise, 0.0)), D, Pt, sigma_e)
+        out = gnn_inference.infer(str(model_path), np.sqrt(np.maximum(gain_over_noise, 0.0)), D, Pt, sigma_e)
         timing = {**empty_timing(), **{k: float(v) for k, v in out.items() if k.endswith("_sec")}}
         timing["mix_lambda_mean"] = float(out.get("mix_lambda_mean", 1.0))
         timing["total_sec"] = float(out.get("python_total_sec", time.perf_counter() - t0))
         return np.asarray(out["rho"], dtype=np.float64), timing
     except Exception as exc:  # pragma: no cover - defensive fallback for missing PyG/checkpoint mismatch
-        _warn_model_once(str(model_path), f"GNN inference failed for {model_path.name}; falling back to EPA. {exc}")
+        _warn_model_once(str(model_path), f"Graph-model inference failed for {model_path.name}; falling back to EPA. {exc}")
         timing = empty_timing()
         timing["total_sec"] = time.perf_counter() - t0
         timing["forward_sec"] = timing["total_sec"]
@@ -857,9 +709,9 @@ def compute_rho_local_gnn(
         timing["forward_sec"] = timing["total_sec"]
         return compute_rho_epa(D, Pt), timing
     try:
-        import gnn_runtime_local
+        import gnn_local_inference
 
-        out = gnn_runtime_local.infer(str(model_path), np.sqrt(np.maximum(gain_over_noise, 0.0)), D, Pt, sigma_e)
+        out = gnn_local_inference.infer(str(model_path), np.sqrt(np.maximum(gain_over_noise, 0.0)), D, Pt, sigma_e)
         timing = {**empty_timing(), **{k: float(v) for k, v in out.items() if k.endswith("_sec")}}
         timing["total_sec"] = float(out.get("python_total_sec", time.perf_counter() - t0))
         return np.asarray(out["rho"], dtype=np.float64), timing
@@ -869,48 +721,6 @@ def compute_rho_local_gnn(
         timing["total_sec"] = time.perf_counter() - t0
         timing["forward_sec"] = timing["total_sec"]
         return compute_rho_epa(D, Pt), timing
-
-
-def normalized_power_entropy(rho: np.ndarray, D: np.ndarray) -> float:
-    D_bin = (D > 0.5).astype(float)
-    rho = np.maximum(rho, 0.0) * D_bin
-    row_sum = np.sum(rho, axis=1, keepdims=True)
-    served = np.sum(D_bin, axis=1, keepdims=True)
-    active = (row_sum[:, 0] > 0) & (served[:, 0] > 1)
-    if not np.any(active):
-        return 1.0
-    p = rho[active, :] / np.maximum(row_sum[active, :], EPS)
-    h = -np.sum(p * np.log(np.maximum(p, EPS)), axis=1)
-    return float(np.mean(h / np.log(np.maximum(served[active, 0], 2.0))))
-
-
-def compute_rho_ugnn(
-    D: np.ndarray,
-    gain_over_noise: np.ndarray,
-    Pt: float,
-    model_path: Path | str,
-    sigma_e: float,
-    guard_enabled: bool = False,
-    min_entropy: float = 0.35,
-    guard_alpha: float = -1.0,
-) -> tuple[np.ndarray, dict[str, float], np.ndarray]:
-    t0 = time.perf_counter()
-    rho_nn, timing = compute_rho_gnn(D, gain_over_noise, Pt, model_path, sigma_e)
-    entropy = normalized_power_entropy(rho_nn, D)
-    row_power = np.sum(np.maximum(rho_nn, 0.0), axis=1)
-    active_rows = np.sum(D > 0.5, axis=1) > 0
-    invalid = (not np.isfinite(rho_nn).all()) or np.any(row_power[active_rows] <= 0)
-    if invalid or (guard_enabled and entropy < min_entropy):
-        rho = compute_rho_fpcp(D, gain_over_noise, Pt, guard_alpha)
-        timing["guard_triggered"] = 1.0
-    else:
-        rho = rho_nn
-        timing["guard_triggered"] = 0.0
-    timing["guard_entropy"] = entropy
-    timing["guard_invalid"] = float(invalid)
-    timing["guard_sec"] = time.perf_counter() - t0 - timing.get("total_sec", 0.0)
-    timing["total_sec"] = time.perf_counter() - t0
-    return rho, timing, rho_nn
 
 
 def compute_rho_rl(
@@ -928,9 +738,9 @@ def compute_rho_rl(
         timing["forward_sec"] = timing["total_sec"]
         return compute_rho_epa(D, Pt), timing
     try:
-        import rl_runtime
+        import rl_inference
 
-        out = rl_runtime.infer(str(model_path), np.sqrt(np.maximum(gain_over_noise, 0.0)), D, Pt, sigma_e)
+        out = rl_inference.infer(str(model_path), np.sqrt(np.maximum(gain_over_noise, 0.0)), D, Pt, sigma_e)
         timing = {**empty_timing(), **{k: float(v) for k, v in out.items() if k.endswith("_sec")}}
         timing["total_sec"] = float(out.get("python_total_sec", time.perf_counter() - t0))
         return np.asarray(out["rho"], dtype=np.float64), timing
@@ -949,11 +759,8 @@ def build_algo_table(pa_keys: list[str] | None = None, pc_keys: list[str] | None
         "EPA": ("EPA", "distributed"),
         "FPCP": ("FPCP", "distributed"),
         "DWMMSE": ("D-WMMSE", "distributed"),
-        "WMMSE": ("WMMSE", "centralized_reference"),
-        "GNN": ("GNN", "low_latency_centralized"),
         "LocalGNN": ("Local-GNN", "distributed"),
         "DCGNN": ("DCGNN", "low_latency_centralized"),
-        "UGNN": ("U-GNN", "low_latency_centralized"),
         "DQN": ("DQN", "low_latency_centralized"),
         "DDPG": ("DDPG", "low_latency_centralized"),
     }
@@ -990,7 +797,7 @@ def build_algo_table(pa_keys: list[str] | None = None, pc_keys: list[str] | None
 
 
 def method_names() -> list[str]:
-    return ["Baseline", "FPCP", "D-WMMSE", "WMMSE", "GNN", "Local-GNN", "DCGNN", "U-GNN", "DQN", "DDPG"]
+    return ["Baseline", "FPCP", "D-WMMSE", "Local-GNN", "DCGNN", "DQN", "DDPG"]
 
 
 def pa_to_method(pa_key: str) -> str | None:
@@ -998,11 +805,8 @@ def pa_to_method(pa_key: str) -> str | None:
         "baseline": "Baseline",
         "FPCP": "FPCP",
         "DWMMSE": "D-WMMSE",
-        "WMMSE": "WMMSE",
-        "GNN": "GNN",
         "LocalGNN": "Local-GNN",
         "DCGNN": "DCGNN",
-        "UGNN": "U-GNN",
         "DQN": "DQN",
         "DDPG": "DDPG",
     }.get(pa_key)
@@ -1020,14 +824,14 @@ def print_final_results(
     names = [a["name"] for a in algo_table]
     distributed = np.array([bool(a["isDistributed"]) for a in algo_table])
     baseline_idx = next((i for i, n in enumerate(names) if "Baseline" in n and "MR" in n and "DCC" in n), 0)
-    wmmse_idx = next((i for i, n in enumerate(names) if "WMMSE" in n and "D-WMMSE" not in n and "L-MMSE-G" not in n), baseline_idx)
+    dwmmse_idx = next((i for i, n in enumerate(names) if "D-WMMSE" in n and "L-MMSE-G" not in n), baseline_idx)
     baseline_avg = avg[baseline_idx]
-    wmmse_avg = avg[wmmse_idx]
+    dwmmse_avg = avg[dwmmse_idx]
 
     print("\n=====================================================================")
     print("  DISTRIBUTED DOWNLINK CANDIDATES (Python)")
     print("=====================================================================")
-    print(f"  {'Rank':<4}  {'Algorithm':<30}  {'Avg ESR':>10}  {'vs Baseline':>12}  {'vs WMMSE':>12}")
+    print(f"  {'Rank':<4}  {'Algorithm':<30}  {'Avg ESR':>10}  {'vs Baseline':>12}  {'vs D-WMMSE':>12}")
     print("---------------------------------------------------------------------")
     rank = 0
     for idx in order:
@@ -1035,7 +839,7 @@ def print_final_results(
             continue
         rank += 1
         pct_base = (avg[idx] - baseline_avg) / max(abs(baseline_avg), 1.0) * 100.0
-        print(f"  {rank:<4d}  {names[idx]:<30}  {avg[idx]:10.2f}  {pct_base:+11.2f}%  {avg[idx] - wmmse_avg:+12.2f}")
+        print(f"  {rank:<4d}  {names[idx]:<30}  {avg[idx]:10.2f}  {pct_base:+11.2f}%  {avg[idx] - dwmmse_avg:+12.2f}")
 
     print("\nBest distributed algorithms per SNR:")
     for si, snr in enumerate(snr_db):
@@ -1175,8 +979,8 @@ def maybe_plot_esr(
         return
 
     save_dir.mkdir(parents=True, exist_ok=True)
-    pa_order = ["LocalGNN", "UGNN", "DCGNN", "GNN", "DDPG", "DQN", "DWMMSE", "WMMSE", "FPCP", "EPA", "random", "baseline"]
-    pa_labels = ["Local-GNN", "U-GNN", "DCGNN", "GNN", "DDPG", "DQN", "D-WMMSE", "WMMSE", "FPCP", "EPA", "Random", "Baseline"]
+    pa_order = ["LocalGNN", "DCGNN", "DDPG", "DQN", "DWMMSE", "FPCP", "EPA", "random", "baseline"]
+    pa_labels = ["Local-GNN", "DCGNN", "DDPG", "DQN", "D-WMMSE", "FPCP", "EPA", "Random", "Baseline"]
     colors = plt.cm.tab20(np.linspace(0, 1, len(pa_order)))
 
     plt.figure(figsize=(10, 6))
@@ -1322,8 +1126,6 @@ def estimate_pc_sync(pc_name: str, L: int, K: int, N: int, nbr: int, n_iter: int
 
 def estimate_pa_sync(pa_name: str, L: int, K: int, cfg: dict[str, Any], payload_ratio: float) -> tuple[float, float]:
     lk_complex_bytes = L * K * 16.0 * payload_ratio
-    if pa_name == "WMMSE":
-        return float(cfg["wmmseRounds"]), lk_complex_bytes * cfg["wmmseRounds"]
     if pa_name == "DWMMSE":
         return float(cfg["dwmmseRounds"]), K * 8.0 * cfg["dwmmseRounds"]
     return 0.0, 0.0
@@ -1344,7 +1146,7 @@ def lookup_feature_collection_bytes(
 ) -> tuple[float, float]:
     if pa_name == "LocalGNN":
         return 0.0, 0.0
-    method = {"GNN": "GNN", "DCGNN": "DCGNN", "UGNN": "U-GNN", "DQN": "DQN", "DDPG": "DDPG"}.get(pa_name)
+    method = {"DCGNN": "DCGNN", "DQN": "DQN", "DDPG": "DDPG"}.get(pa_name)
     if method is None:
         return 0.0, 0.0
     if pa_name == "DCGNN":
@@ -1378,12 +1180,6 @@ def estimate_model_inference_ms(pa_name: str, L: int, K: int, cfg: dict[str, Any
     gops = float(cfg.get("inferenceGops", 80.0))
     controller_gops = float(cfg.get("controllerGops", 200.0))
 
-    if pa_name in {"GNN", "UGNN"}:
-        param_ops = lookup_model_param_count(pa_name, perf) * 2.0
-        message_ops = edge_count * layers * hidden * max(heads, 1) * 2.0
-        if pa_name == "UGNN":
-            message_ops *= 1.15
-        return ops_to_ms(param_ops + message_ops, controller_gops)
     if pa_name == "DCGNN":
         z = int(cfg.get("dcgnnTopZ", 15))
         dc_edges = min(edge_count, z * (L + K))
@@ -1410,14 +1206,12 @@ def estimate_model_inference_ms(pa_name: str, L: int, K: int, cfg: dict[str, Any
 
 def lookup_model_param_count(pa_name: str, perf: dict[str, Any]) -> float:
     counts = perf.get("model_param_count", {}) if isinstance(perf, dict) else {}
-    key_map = {"GNN": "GNN", "DCGNN": "DCGNN", "UGNN": "UGNN", "LocalGNN": "Local-GNN", "DQN": "DQN", "DDPG": "DDPG"}
+    key_map = {"DCGNN": "DCGNN", "LocalGNN": "Local-GNN", "DQN": "DQN", "DDPG": "DDPG"}
     value = counts.get(key_map.get(pa_name, pa_name), 0.0)
     if value and np.isfinite(value):
         return float(value)
     return {
-        "GNN": 400_000.0,
         "DCGNN": 400_000.0,
-        "UGNN": 420_000.0,
         "LocalGNN": 110_000.0,
         "DQN": 2_100_000.0,
         "DDPG": 5_200_000.0,

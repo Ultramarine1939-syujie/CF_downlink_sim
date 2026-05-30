@@ -7,7 +7,7 @@ import h5py
 import numpy as np
 import torch
 from torch.utils.data import Dataset as TorchDataset
-from project_paths import TRAINING_DATA_DIR
+from config import TRAINING_DATA_DIR
 
 
 def _as_lkn(arr, L, K, name):
@@ -33,7 +33,7 @@ class GNNDataset(TorchDataset):
         x_ap: AP 节点特征 (N_snaps, K, L) → 转置后 (N_snaps, L, K)
         x_ue: UE 节点特征
         edge_index: 边索引
-        y: 标签 (rho_WMMSE)
+        y: label power allocation
         esr_labels: ESR 标签
     """
 
@@ -60,14 +60,16 @@ class GNNDataset(TorchDataset):
 
             # 读取 labels
             labels = f['labels']
-            # 训练目标应与项目目标一致：学习 WMMSE 的功率分配映射。
-            if 'rho_WMMSE' in labels:
-                rho_raw = np.array(labels['rho_WMMSE'])
-                print("  Using rho_WMMSE as labels (GNN learns WMMSE mapping)")
+            if 'rho_DWMMSE' in labels:
+                rho_raw = np.array(labels['rho_DWMMSE'])
+                print("  Using rho_DWMMSE as labels")
             else:
                 rho_raw = np.array(labels['rho_Dist'])
-                print("  WARNING: rho_WMMSE not found, falling back to rho_Dist")
-            ESR_WMMSE = np.array(labels['ESR_WMMSE']).flatten()  # (N,)
+                print("  WARNING: rho_DWMMSE not found, falling back to rho_Dist")
+            if 'ESR_DWMMSE' in labels:
+                ESR_ref = np.array(labels['ESR_DWMMSE']).flatten()
+            else:
+                ESR_ref = np.array(labels['ESR_Dist']).flatten()
 
             # 读取 meta 信息 (结构体数组)
             meta = f['meta']
@@ -101,7 +103,7 @@ class GNNDataset(TorchDataset):
                   f"got {len(sigma_e_flat)} values for {n_snaps_raw} snapshots. Using first value.")
             self.sigma_e = np.full(n_snaps_raw, sigma_e_flat[0])
         self.rho_raw = _as_lkn(rho_raw, L, K, 'labels.rho')   # (L, K, N) 原始标签
-        self.ESR_WMMSE = ESR_WMMSE                          # (N,)
+        self.ESR_ref = ESR_ref                              # (N,)
 
         self.snrs = np.array(snrs)
         self.modes = modes
@@ -113,7 +115,7 @@ class GNNDataset(TorchDataset):
             self.D = self.D[:, :, mask]
             self.sigma_e = self.sigma_e[mask]
             self.rho_raw = self.rho_raw[:, :, mask]
-            self.ESR_WMMSE = self.ESR_WMMSE[mask]
+            self.ESR_ref = self.ESR_ref[mask]
             self.snrs = self.snrs[mask]
             self.modes = [self.modes[i] for i in range(len(mask)) if mask[i]]
 
@@ -126,7 +128,7 @@ class GNNDataset(TorchDataset):
         # ── 方案B: 样本内归一化 ──
         # 不再在 __init__ 做全局归一化，改为在 __getitem__ 中对每个快照独立归一化
         # 这样每个样本内非零 rho 的差异会被充分利用，不会因全局长尾分布被压缩
-        self.rho_WMMSE = None   # 不再预计算，改为动态生成
+        self.rho_ref = None   # generated dynamically
 
         # 全局统计信息（仅用于打印）
         n_neg = int((self.rho_raw < 0).sum())
@@ -164,7 +166,7 @@ class GNNDataset(TorchDataset):
                 x_ue: UE 节点特征 (K, L+4) - masked sqrt(gain) + SNR/CSI/degree/gain context
                 edge_index: 边索引 (2, num_edges) - 固定的完整二部图边
                 D_mask: D 矩阵掩码 (L, K) - 指示哪些边有效
-                y: 标签 rho_WMMSE (L, K)
+                y: label rho (L, K)
                 esr: ESR 标签 (标量)
                 snr: SNR 值 (标量)
                 mode: 接入模式 (字符串)
@@ -174,7 +176,7 @@ class GNNDataset(TorchDataset):
         D = self.D[:, :, idx]               # (L, K)
         sigma_e = self.sigma_e[idx]  # 标量 (1D array)
         rho_raw_snap = self.rho_raw[:, :, idx]  # (L, K) 原始 rho
-        esr = self.ESR_WMMSE[idx]
+        esr = self.ESR_ref[idx]
         snr = self.snrs[idx]
         mode = self.modes[idx]
 
@@ -306,7 +308,7 @@ class GNNDatasetGlobalNorm(TorchDataset):
         D = self.D[:, :, idx]
         sigma_e = self.sigma_e[idx]
         rho_raw_snap = self.rho_raw[:, :, idx]
-        esr = self.ESR_WMMSE[idx]
+        esr = self.ESR_ref[idx]
         snr = self.snrs[idx]
         mode = self.modes[idx]
 

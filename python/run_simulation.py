@@ -13,7 +13,7 @@ from typing import Any
 
 import numpy as np
 
-from cf_sim_core import (
+from simulator import (
     build_algo_table,
     build_sync_ablation_metrics,
     channel_estimates,
@@ -25,8 +25,6 @@ from cf_sim_core import (
     compute_rho_local_gnn,
     compute_rho_random,
     compute_rho_rl,
-    compute_rho_ugnn,
-    compute_rho_wmmse,
     compute_se,
     db2pow,
     default_params,
@@ -43,11 +41,11 @@ from cf_sim_core import (
     write_sync_ablation_csv,
 )
 from plots import plot_all_ablation, plot_all_esr, plot_scenario_setup
-from project_paths import FIGURE_DIR, MODEL_DIR, PROJECT_ROOT, SIMULATION_DATA_DIR
+from config import FIGURE_DIR, MODEL_DIR, PROJECT_ROOT, SIMULATION_DATA_DIR
 
 
-TRAD_PA = ["baseline", "random", "EPA", "FPCP", "DWMMSE", "WMMSE"]
-LEARNED_PA = ["GNN", "LocalGNN", "DCGNN", "UGNN", "DQN", "DDPG"]
+TRAD_PA = ["baseline", "random", "EPA", "FPCP", "DWMMSE"]
+LEARNED_PA = ["LocalGNN", "DCGNN", "DQN", "DDPG"]
 ALL_PA = TRAD_PA + LEARNED_PA
 ALL_PC = ["MR", "LMMSE", "RMMSE", "LMMSE_G"]
 
@@ -78,10 +76,8 @@ def parse_args() -> argparse.Namespace:
 
 def resolved_model_paths(params: dict[str, Any]) -> dict[str, Path]:
     return {
-        "GNN": PROJECT_ROOT / params["gnn"]["fullModelFile"],
         "LocalGNN": PROJECT_ROOT / params["gnn"]["localModelFile"],
         "DCGNN": PROJECT_ROOT / params["gnn"]["dcgnnModelFile"],
-        "UGNN": PROJECT_ROOT / params["gnn"]["ugnnModelFile"],
         "DQN": PROJECT_ROOT / params["rl"]["dqnModelFile"],
         "DDPG": PROJECT_ROOT / params["rl"]["ddpgModelFile"],
     }
@@ -250,6 +246,95 @@ def save_scenario_cache(cache_file: Path, scenario_idx: int, fp: str, scenario: 
     tmp_file.replace(cache_file)
 
 
+def _model_cache_signature(model_paths: dict[str, Path]) -> list[tuple[str, str, float, int]]:
+    signature: list[tuple[str, str, float, int]] = []
+    for key in sorted(model_paths):
+        path = model_paths[key]
+        if path.is_file():
+            stat = path.stat()
+            signature.append((key, str(path), stat.st_mtime, stat.st_size))
+        else:
+            signature.append((key, str(path), 0.0, 0))
+    return signature
+
+
+def snr_cache_fingerprint(
+    scenario_fp: str,
+    snr: float,
+    pa_keys: list[str],
+    pc_keys: list[str],
+    modes: list[str],
+    params: dict[str, Any],
+    model_paths: dict[str, Path],
+) -> str:
+    """Fingerprint the SNR-level simulation work for safe result reuse."""
+
+    return fingerprint(
+        "python_snr_cache_v1",
+        scenario_fp,
+        float(snr),
+        pa_keys,
+        pc_keys,
+        modes,
+        params["runtime"]["runStage"],
+        params["dwmmse"],
+        params["fpcp"],
+        params["csi"],
+        _model_cache_signature(model_paths),
+    )
+
+
+def load_snr_cache(cache_file: Path, expected_fp: str, num_algos: int, perf_shape: tuple[int, int]) -> dict[str, np.ndarray] | None:
+    if not cache_file.is_file():
+        return None
+    try:
+        with np.load(cache_file, allow_pickle=False) as data:
+            stored_fp = str(data["fingerprint"])
+            if stored_fp != expected_fp:
+                return None
+            esr = np.asarray(data["esr"], dtype=np.float64)
+            if esr.shape != (num_algos,):
+                return None
+            time_pa = np.asarray(data["time_pa_sec"], dtype=np.float64)
+            time_core = np.asarray(data["time_core_sec"], dtype=np.float64)
+            comm = np.asarray(data["comm_bytes"], dtype=np.float64)
+            time_pc = np.asarray(data["time_pc_sec"], dtype=np.float64)
+            if time_pa.shape != perf_shape or time_core.shape != perf_shape or comm.shape != perf_shape:
+                return None
+            return {
+                "esr": esr,
+                "time_pa_sec": time_pa,
+                "time_core_sec": time_core,
+                "comm_bytes": comm,
+                "time_pc_sec": time_pc,
+            }
+    except Exception:
+        return None
+
+
+def save_snr_cache(
+    cache_file: Path,
+    fp: str,
+    esr: np.ndarray,
+    time_pa: np.ndarray,
+    time_core: np.ndarray,
+    comm: np.ndarray,
+    time_pc: np.ndarray,
+) -> None:
+    cache_file.parent.mkdir(parents=True, exist_ok=True)
+    tmp_file = cache_file.with_suffix(".tmp.npz")
+    np.savez_compressed(
+        tmp_file,
+        fingerprint=np.asarray(fp),
+        esr=np.asarray(esr, dtype=np.float64),
+        time_pa_sec=np.asarray(time_pa, dtype=np.float64),
+        time_core_sec=np.asarray(time_core, dtype=np.float64),
+        comm_bytes=np.asarray(comm, dtype=np.float64),
+        time_pc_sec=np.asarray(time_pc, dtype=np.float64),
+    )
+    tmp_file.replace(cache_file)
+
+
 def compute_precoder(
     pc_key: str,
     Hhat: np.ndarray,
@@ -303,29 +388,10 @@ def compute_pa_once(
         timing = {"total_sec": time.perf_counter() - t0, "forward_sec": time.perf_counter() - t0}
         timing["messageBytes"] = float(info.get("messageBytes", 0.0))
         return rho, timing
-    if pa_key == "WMMSE":
-        rho, it = compute_rho_wmmse(
-            Hhat,
-            D,
-            Pt,
-            N,
-            K,
-            L,
-            nbr,
-            params["wmmse"]["simMaxIter"],
-            params["wmmse"]["tol"],
-            verbose=False,
-        )
-        return rho, {"total_sec": time.perf_counter() - t0, "forward_sec": time.perf_counter() - t0, "iter_used": float(it)}
-    if pa_key == "GNN":
-        return compute_rho_gnn(D, gain, Pt, model_paths["GNN"], params["csi"]["sigma_e"])
     if pa_key == "LocalGNN":
         return compute_rho_local_gnn(D, gain, Pt, model_paths["LocalGNN"], params["csi"]["sigma_e"])
     if pa_key == "DCGNN":
         return compute_rho_gnn(D, gain, Pt, model_paths["DCGNN"], params["csi"]["sigma_e"])
-    if pa_key == "UGNN":
-        rho, timing, _ = compute_rho_ugnn(D, gain, Pt, model_paths["UGNN"], params["csi"]["sigma_e"])
-        return rho, timing
     if pa_key == "DQN":
         return compute_rho_rl(D, gain, Pt, model_paths["DQN"], params["csi"]["sigma_e"])
     if pa_key == "DDPG":
@@ -431,10 +497,8 @@ def run_simulation(args: argparse.Namespace) -> None:
         "comm_bytes": np.zeros((len(method_names()), num_snr, len(modes))),
         "time_pc_sec": np.zeros((len(ALL_PC), num_snr, len(modes))),
         "model_param_count": {
-            "GNN": count_model_parameters(model_paths["GNN"]),
             "Local-GNN": count_model_parameters(model_paths["LocalGNN"]),
             "DCGNN": count_model_parameters(model_paths["DCGNN"]),
-            "UGNN": count_model_parameters(model_paths["UGNN"]),
             "DQN": count_model_parameters(model_paths["DQN"]),
             "DDPG": count_model_parameters(model_paths["DDPG"]),
         },
@@ -511,6 +575,25 @@ def run_simulation(args: argparse.Namespace) -> None:
             print(f"  |   SNR {si + 1:2d}/{num_snr:2d} ({snr:5.1f} dB)")
             mode = modes[0]
             mode_idx = 0
+            snr_fp = snr_cache_fingerprint(scenario_fp, float(snr), pa_keys, pc_keys, modes, params, model_paths)
+            snr_cache_file = data_dir / f"cache_snr_python_s{s}_sn{snr:.0f}.npz"
+            perf_shape = (len(method_names()), len(modes))
+            cached_snr = load_snr_cache(snr_cache_file, snr_fp, num_algos, perf_shape) if use_cache else None
+            if cached_snr is not None:
+                ESR_acc[:, si] += cached_snr["esr"]
+                perf["time_pa_sec"][:, si, :] += cached_snr["time_pa_sec"]
+                perf["time_core_sec"][:, si, :] += cached_snr["time_core_sec"]
+                perf["comm_bytes"][:, si, :] += cached_snr["comm_bytes"]
+                perf["time_pc_sec"][:, si, :] += cached_snr["time_pc_sec"]
+                completed += num_algos
+                print("  |   [CACHE HIT] SNR result loaded")
+                continue
+
+            esr_local = np.zeros(num_algos, dtype=np.float64)
+            time_pa_before = perf["time_pa_sec"][:, si, :].copy()
+            time_core_before = perf["time_core_sec"][:, si, :].copy()
+            comm_before = perf["comm_bytes"][:, si, :].copy()
+            time_pc_before = perf["time_pc_sec"][:, si, :].copy()
 
             precoders: dict[str, tuple[np.ndarray, np.ndarray]] = {}
             for pc_key in pc_keys:
@@ -528,7 +611,8 @@ def run_simulation(args: argparse.Namespace) -> None:
                     continue
                 rho, timing = compute_pa_once(pa_key, D, gain, Hhat, Pt, N, K, L, nbr, params, model_paths)
                 pa_cache[pa_key] = (rho, timing)
-                update_perf(perf, pa_key, si, mode_idx, timing, comm_bytes=L * K * 16 if pa_key in {"GNN", "DCGNN", "UGNN", "DQN", "DDPG"} else 0.0)
+                centralized_learned = {"DCGNN", "DQN", "DDPG"}
+                update_perf(perf, pa_key, si, mode_idx, timing, comm_bytes=L * K * 16 if pa_key in centralized_learned else 0.0)
 
             for ai, algo in enumerate(algo_table):
                 if algo["mode"] != mode:
@@ -546,8 +630,19 @@ def run_simulation(args: argparse.Namespace) -> None:
                 se = compute_se(H, V, scaling, D, tau_c, tau_p, nbr, N, K, L, rho)
                 esr = float(np.sum(se))
                 ESR_acc[ai, si] += esr
+                esr_local[ai] = esr
                 if params["runtime"]["verboseAlgo"]:
                     print(f"  |   |  {algo['name']:<28} ESR={esr:8.3f} PA={timing.get('total_sec', 0.0) * 1000:.3f} ms")
+            if use_cache:
+                save_snr_cache(
+                    snr_cache_file,
+                    snr_fp,
+                    esr_local,
+                    perf["time_pa_sec"][:, si, :] - time_pa_before,
+                    perf["time_core_sec"][:, si, :] - time_core_before,
+                    perf["comm_bytes"][:, si, :] - comm_before,
+                    perf["time_pc_sec"][:, si, :] - time_pc_before,
+                )
             completed += num_algos
 
     ESR_mean = ESR_acc / max(num_scenarios, 1)
@@ -576,7 +671,6 @@ def run_simulation(args: argparse.Namespace) -> None:
     if params["syncAblation"]["enable"] and params["output"]["isSaveData"]:
         sync_cfg = dict(params["syncAblation"])
         sync_cfg["dwmmseRounds"] = params["dwmmse"]["rounds"]
-        sync_cfg["wmmseRounds"] = params["wmmse"]["simMaxIter"]
         ablation = build_sync_ablation_metrics(ESR_mean, algo_table, snr_db, perf, L, K, N, nbr, n_iter, sync_cfg)
         ablation_file = data_dir / "Sync_Ablation_Results_python.csv"
         write_sync_ablation_csv(ablation_file, ablation)

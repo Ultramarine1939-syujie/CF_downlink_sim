@@ -5,11 +5,8 @@ import numpy as np
 import sys
 from pathlib import Path
 
-PYTHON_DIR = Path(__file__).resolve().parent / "python"
-if str(PYTHON_DIR) not in sys.path:
-    sys.path.insert(0, str(PYTHON_DIR))
+from config import TRAINING_DATA_DIR
 
-from project_paths import TRAINING_DATA_DIR
 
 def as_lkn(arr, L, K):
     """Normalize MATLAB v7.3/HDF5 arrays to (L, K, N_snap)."""
@@ -23,6 +20,7 @@ def as_lkn(arr, L, K):
     if arr.shape[0] == K and arr.shape[1] == L:
         return np.transpose(arr, (1, 0, 2))
     return arr
+
 
 def validate_dataset(mat_path):
     print(f"Loading: {mat_path}")
@@ -239,6 +237,7 @@ def validate_dataset(mat_path):
         print("  Validation Complete")
         print("="*60)
 
+
 def latest_dataset_path():
     candidates = sorted(
         TRAINING_DATA_DIR.glob("gnn_training_data_*.mat"),
@@ -247,6 +246,7 @@ def latest_dataset_path():
     )
     return candidates[0] if candidates else None
 
+
 if __name__ == "__main__":
     if len(sys.argv) > 1:
         mat_path = sys.argv[1]
@@ -254,6 +254,6 @@ if __name__ == "__main__":
         mat_path = latest_dataset_path()
         if mat_path is None:
             print(f"ERROR: no dataset found under {TRAINING_DATA_DIR}")
-            print("Usage: python validate_dataset.py path/to/gnn_training_data_*.mat")
+            print("Usage: python validation.py path/to/gnn_training_data_*.mat")
             sys.exit(1)
     validate_dataset(mat_path)

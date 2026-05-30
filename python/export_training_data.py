@@ -12,11 +12,11 @@ from typing import Any
 
 import numpy as np
 
-from cf_sim_core import (
+from simulator import (
     channel_estimates,
+    compute_rho_distributed_wmmse,
     compute_rho_dist,
     compute_rho_epa,
-    compute_rho_wmmse,
     compute_se,
     db2pow,
     default_params,
@@ -24,7 +24,7 @@ from cf_sim_core import (
     precoding_mr,
     write_training_dataset_h5,
 )
-from project_paths import TRAINING_DATA_DIR
+from config import TRAINING_DATA_DIR
 
 
 def parse_args() -> argparse.Namespace:
@@ -58,8 +58,6 @@ def generate_single_snapshot(
     sigma_e = float(params["csi"]["sigma_e"])
     nbr = int(params["training"]["nbrOfRealizations"])
     nbr_setups = int(params["training"]["nbrOfSetups"])
-    max_iter = int(params["wmmse"]["maxIter"])
-    tol = float(params["wmmse"]["tol"])
     Pt = float(db2pow(snr_db))
 
     seed = seed_offset + si * 100000 + mode_idx * 10000 + snap
@@ -84,16 +82,16 @@ def generate_single_snapshot(
     H = Hhat + np.sqrt(sigma_e**2 / 2.0) * (rng.standard_normal(Hhat.shape) + 1j * rng.standard_normal(Hhat.shape))
     V_mr, sc_mr = precoding_mr(Hhat, nbr, N, K, L)
 
-    rho_wmmse, _ = compute_rho_wmmse(Hhat, D, Pt, N, K, L, nbr, max_iter, tol, verbose=False)
+    rho_dwmmse, _ = compute_rho_distributed_wmmse(D, gain, Pt, params["dwmmse"]["rounds"], params["dwmmse"]["damping"])
     rho_dist = compute_rho_dist(D, gain, Pt)
     rho_epa = compute_rho_epa(D, Pt)
 
-    esr_w = float(np.sum(compute_se(H, V_mr, sc_mr, D, tau_c, tau_p, nbr, N, K, L, rho_wmmse)))
+    esr_dw = float(np.sum(compute_se(H, V_mr, sc_mr, D, tau_c, tau_p, nbr, N, K, L, rho_dwmmse)))
     esr_d = float(np.sum(compute_se(H, V_mr, sc_mr, D, tau_c, tau_p, nbr, N, K, L, rho_dist)))
     esr_e = float(np.sum(compute_se(H, V_mr, sc_mr, D, tau_c, tau_p, nbr, N, K, L, rho_epa)))
 
     D_aug = D.copy()
-    rho_w_aug = rho_wmmse.copy()
+    rho_dw_aug = rho_dwmmse.copy()
     rho_d_aug = rho_dist.copy()
     rho_e_aug = rho_epa.copy()
     sigma_e_aug = sigma_e
@@ -104,14 +102,14 @@ def generate_single_snapshot(
         drop_rate = drop_min + (drop_max - drop_min) * rng.random()
         dropped = (rng.random((L, K)) < drop_rate) & (D_aug > 0.5)
         D_aug[dropped] = 0.0
-        rho_w_aug[dropped] = 0.0
+        rho_dw_aug[dropped] = 0.0
         rho_d_aug[dropped] = 0.0
         rho_e_aug[dropped] = 0.0
         sigma_var = float(params["training"]["dataAug_sigma_e_var"])
         sigma_e_aug = sigma_e * (1.0 + sigma_var * (rng.random() - 0.5) * 2.0)
 
     meta = {"SNR_dB": float(snr_db), "mode": mode, "seed": int(seed), "snapIdx": int(snap)}
-    return np.sqrt(gain), D_aug, float(sigma_e_aug), rho_w_aug, rho_d_aug, rho_e_aug, esr_w, esr_d, esr_e, meta
+    return np.sqrt(gain), D_aug, float(sigma_e_aug), rho_dw_aug, rho_d_aug, rho_e_aug, esr_dw, esr_d, esr_e, meta
 
 
 def export_dataset(args: argparse.Namespace) -> Path:
@@ -149,10 +147,10 @@ def export_dataset(args: argparse.Namespace) -> Path:
     sqrt_gain_all = np.zeros((L, K, n_snaps), dtype=np.float32)
     D_all = np.zeros((L, K, n_snaps), dtype=np.float32)
     sigma_all = np.zeros((1, 1, n_snaps), dtype=np.float32)
-    rho_w_all = np.zeros((L, K, n_snaps), dtype=np.float32)
+    rho_dw_all = np.zeros((L, K, n_snaps), dtype=np.float32)
     rho_d_all = np.zeros((L, K, n_snaps), dtype=np.float32)
     rho_e_all = np.zeros((L, K, n_snaps), dtype=np.float32)
-    esr_w_all = np.zeros(n_snaps, dtype=np.float32)
+    esr_dw_all = np.zeros(n_snaps, dtype=np.float32)
     esr_d_all = np.zeros(n_snaps, dtype=np.float32)
     esr_e_all = np.zeros(n_snaps, dtype=np.float32)
     meta_rows: list[dict[str, Any]] = []
@@ -174,14 +172,14 @@ def export_dataset(args: argparse.Namespace) -> Path:
                     args.seed,
                     augment=not args.no_augment,
                 )
-                sqrt_g, D, sigma_aug, rho_w, rho_d, rho_e, esr_w, esr_d, esr_e, meta = values
+                sqrt_g, D, sigma_aug, rho_dw, rho_d, rho_e, esr_dw, esr_d, esr_e, meta = values
                 sqrt_gain_all[:, :, idx] = sqrt_g.astype(np.float32)
                 D_all[:, :, idx] = D.astype(np.float32)
                 sigma_all[0, 0, idx] = np.float32(sigma_aug)
-                rho_w_all[:, :, idx] = rho_w.astype(np.float32)
+                rho_dw_all[:, :, idx] = rho_dw.astype(np.float32)
                 rho_d_all[:, :, idx] = rho_d.astype(np.float32)
                 rho_e_all[:, :, idx] = rho_e.astype(np.float32)
-                esr_w_all[idx] = np.float32(esr_w)
+                esr_dw_all[idx] = np.float32(esr_dw)
                 esr_d_all[idx] = np.float32(esr_d)
                 esr_e_all[idx] = np.float32(esr_e)
                 meta_rows.append(meta)
@@ -191,10 +189,10 @@ def export_dataset(args: argparse.Namespace) -> Path:
 
     features = {"sqrtGain": sqrt_gain_all, "D": D_all, "sigma_e": sigma_all}
     labels = {
-        "rho_WMMSE": rho_w_all,
+        "rho_DWMMSE": rho_dw_all,
         "rho_Dist": rho_d_all,
         "rho_EPA": rho_e_all,
-        "ESR_WMMSE": esr_w_all.reshape(-1, 1),
+        "ESR_DWMMSE": esr_dw_all.reshape(-1, 1),
         "ESR_Dist": esr_d_all.reshape(-1, 1),
         "ESR_EPA": esr_e_all.reshape(-1, 1),
     }
@@ -229,8 +227,8 @@ def export_dataset(args: argparse.Namespace) -> Path:
     print(f"Total snapshots: {n_snaps}")
     print(f"Elapsed: {elapsed:.1f}s ({elapsed / 60.0:.1f} min)")
     print(f"sqrtGain: {features['sqrtGain'].shape}")
-    print(f"rho_WMMSE: {labels['rho_WMMSE'].shape}")
-    print(f"ESR_WMMSE: min={esr_w_all.min():.2f}, max={esr_w_all.max():.2f}, mean={esr_w_all.mean():.2f}")
+    print(f"rho_DWMMSE: {labels['rho_DWMMSE'].shape}")
+    print(f"ESR_DWMMSE: min={esr_dw_all.min():.2f}, max={esr_dw_all.max():.2f}, mean={esr_dw_all.mean():.2f}")
     return out_file
 
 

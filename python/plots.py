@@ -3,7 +3,7 @@
 Generates the same set of figures as the MATLAB visualization/ scripts:
 - Scenario layout (AP/UE positions)
 - ESR vs SNR curves (best PA, fixed R-MMSE)
-- GNN family gap to WMMSE (bar chart)
+- Learning-family gap to D-WMMSE (bar chart)
 - Method summary table
 - Timing comparison (2x2)
 - Sync ablation: PA ranking, heatmap, per-PC dual-axis plots
@@ -18,22 +18,22 @@ import numpy as np
 
 # ── Shared style constants (match MATLAB paColors / paMarkers) ──────────
 
-PA_ORDER = ["LocalGNN", "UGNN", "DCGNN", "GNN", "DDPG", "DQN",
-            "DWMMSE", "WMMSE", "FPCP", "EPA", "random", "baseline"]
-PA_LABELS = ["Local-GNN", "U-GNN", "DCGNN", "GNN", "DDPG", "DQN",
-             "D-WMMSE", "WMMSE", "FPCP", "EPA", "Random", "Baseline"]
+PA_ORDER = ["LocalGNN", "DCGNN", "DDPG", "DQN",
+            "DWMMSE", "FPCP", "EPA", "random", "baseline"]
+PA_LABELS = ["Local-GNN", "DCGNN", "DDPG", "DQN",
+             "D-WMMSE", "FPCP", "EPA", "Random", "Baseline"]
 PA_COLORS = [
-    (0.00, 0.52, 0.58), (0.00, 0.38, 0.38), (0.10, 0.35, 0.95),
-    (0.45, 0.00, 0.75), (0.80, 0.25, 0.65), (0.35, 0.45, 0.90),
-    (0.95, 0.55, 0.10), (0.85, 0.15, 0.15), (0.10, 0.55, 0.25),
+    (0.00, 0.52, 0.58), (0.10, 0.35, 0.95),
+    (0.80, 0.25, 0.65), (0.35, 0.45, 0.90),
+    (0.95, 0.55, 0.10), (0.10, 0.55, 0.25),
     (0.00, 0.60, 0.00), (0.55, 0.55, 0.55), (0.20, 0.20, 0.20),
 ]
-PA_MARKERS = ['x', 'p', '^', 'o', '+', '*', 'h', 's', '>', 'd', 'v', '<']
+PA_MARKERS = ['x', '^', '+', '*', 'h', '>', 'd', 'v', '<']
 
 PC_ORDER = ["MR", "LMMSE", "RMMSE", "LMMSE_G"]
 PC_LABELS = ["MR", "L-MMSE", "R-MMSE", "L-MMSE-G"]
 
-WMMSE_COLOR = (0.85, 0.15, 0.15)
+DWMMSE_COLOR = (0.95, 0.55, 0.10)
 LEFT_COLOR = (0.00, 0.45, 0.74)
 RIGHT_COLOR = (0.85, 0.33, 0.10)
 
@@ -120,7 +120,7 @@ def plot_fig1_best_pa_esr(ESR_mean, algo_table, snr_db, save_dir, enabled=True):
         idx = _get_best_curve(ESR_mean, algo_table, pa_key, 'DCC')
         if idx is None:
             continue
-        is_learning = pa_key in {'GNN', 'LocalGNN', 'DCGNN', 'UGNN', 'DQN', 'DDPG'}
+        is_learning = pa_key in {'LocalGNN', 'DCGNN', 'DQN', 'DDPG'}
         lw = LW_GNN if is_learning else LW_BASE
         ax.plot(snr_db, ESR_mean[idx, :], f'-{PA_MARKERS[pi]}',
                 color=PA_COLORS[pi], linewidth=lw, markersize=7)
@@ -153,7 +153,7 @@ def plot_fig2_rmmse_pa(ESR_mean, algo_table, snr_db, save_dir, enabled=True):
         idx = _find_exact(algo_table, pa_key, fixed_pc, 'DCC')
         if idx is None:
             continue
-        is_learning = pa_key in {'GNN', 'LocalGNN', 'DCGNN', 'UGNN', 'DQN', 'DDPG'}
+        is_learning = pa_key in {'LocalGNN', 'DCGNN', 'DQN', 'DDPG'}
         lw = LW_GNN if is_learning else LW_BASE
         ax.plot(snr_db, ESR_mean[idx, :], f'-{PA_MARKERS[pi]}',
                 color=PA_COLORS[pi], linewidth=lw, markersize=7)
@@ -168,9 +168,9 @@ def plot_fig2_rmmse_pa(ESR_mean, algo_table, snr_db, save_dir, enabled=True):
     _save(fig, save_dir, 'Fig2_RMMSE_PA_Comparison')
 
 
-# ── Fig 3: GNN family gap to WMMSE ─────────────────────────────────────
+# ── Fig 3: Learning-family gap to D-WMMSE ──────────────────────────────
 
-def plot_fig3_gnn_wmmse_gap(ESR_mean, algo_table, snr_db, save_dir, enabled=True):
+def plot_fig3_gnn_dwmmse_gap(ESR_mean, algo_table, snr_db, save_dir, enabled=True):
     if not enabled:
         return
     try:
@@ -180,22 +180,22 @@ def plot_fig3_gnn_wmmse_gap(ESR_mean, algo_table, snr_db, save_dir, enabled=True
 
     fig, ax = plt.subplots(figsize=(9, 5.6))
     fixed_pc = 'RMMSE'
-    wmmse_idx = _find_exact(algo_table, 'WMMSE', fixed_pc, 'DCC')
-    if wmmse_idx is None:
-        ax.text(0.5, 0.5, 'WMMSE R-MMSE DCC reference unavailable',
+    dwmmse_idx = _find_exact(algo_table, 'DWMMSE', fixed_pc, 'DCC')
+    if dwmmse_idx is None:
+        ax.text(0.5, 0.5, 'D-WMMSE R-MMSE DCC reference unavailable',
                 transform=ax.transAxes, ha='center', fontsize=FS_AXIS)
         fig.tight_layout()
-        _save(fig, save_dir, 'Fig3_GNN_WMMSE_Gap')
+        _save(fig, save_dir, 'Fig3_GNN_DWMMSE_Gap')
         return
 
-    gnn_keys = ['LocalGNN', 'UGNN', 'DCGNN', 'GNN', 'DDPG', 'DQN']
-    gnn_labels = ['Local-GNN', 'U-GNN', 'DCGNN', 'GNN', 'DDPG', 'DQN']
+    gnn_keys = ['LocalGNN', 'DCGNN', 'DDPG', 'DQN']
+    gnn_labels = ['Local-GNN', 'DCGNN', 'DDPG', 'DQN']
     gap_data, gap_labels, gap_colors = [], [], []
     for gi, gk in enumerate(gnn_keys):
         idx = _find_exact(algo_table, gk, fixed_pc, 'DCC')
         if idx is None:
             continue
-        pct = (ESR_mean[idx, :] - ESR_mean[wmmse_idx, :]) / np.maximum(ESR_mean[wmmse_idx, :], np.finfo(float).eps) * 100
+        pct = (ESR_mean[idx, :] - ESR_mean[dwmmse_idx, :]) / np.maximum(ESR_mean[dwmmse_idx, :], np.finfo(float).eps) * 100
         gap_data.append(pct)
         gap_labels.append(gnn_labels[gi])
         gap_colors.append(PA_COLORS[gi])
@@ -217,11 +217,11 @@ def plot_fig3_gnn_wmmse_gap(ESR_mean, algo_table, snr_db, save_dir, enabled=True
         ax.legend(loc='best', fontsize=FS_LEG)
 
     ax.set_xlabel('SNR (dB)', fontsize=FS_AXIS)
-    ax.set_ylabel('ESR Gap to WMMSE (%)', fontsize=FS_AXIS)
-    ax.set_title('Learning-family Gap to WMMSE (R-MMSE, DCC)', fontsize=FS_TITLE)
+    ax.set_ylabel('ESR Gap to D-WMMSE (%)', fontsize=FS_AXIS)
+    ax.set_title('Learning-family Gap to D-WMMSE (R-MMSE, DCC)', fontsize=FS_TITLE)
     ax.grid(True)
     fig.tight_layout()
-    _save(fig, save_dir, 'Fig3_GNN_WMMSE_Gap')
+    _save(fig, save_dir, 'Fig3_GNN_DWMMSE_Gap')
 
 
 # ── Fig 4: Method Summary Table ─────────────────────────────────────────
@@ -235,16 +235,16 @@ def plot_fig4_method_summary(ESR_mean, algo_table, save_dir, enabled=True):
         return
 
     notes = {
-        'LocalGNN': 'AP-local learned split', 'UGNN': 'teacher-free GNN split',
-        'DCGNN': 'dynamic graph learned split', 'GNN': 'full-graph learned split',
+        'LocalGNN': 'AP-local learned split',
+        'DCGNN': 'dynamic graph learned split',
         'DDPG': 'DDPG reward-trained split', 'DQN': 'DQN reward-trained alpha',
-        'DWMMSE': 'fixed-round distributed update', 'WMMSE': 'iterative reference',
+        'DWMMSE': 'fixed-round distributed update',
         'FPCP': 'fractional power control', 'EPA': 'equal power',
         'random': 'random baseline', 'baseline': 'large-scale baseline',
     }
 
-    wmmse_idx = _get_best_curve(ESR_mean, algo_table, 'WMMSE', 'DCC')
-    wmmse_avg = float(np.mean(ESR_mean[wmmse_idx, :])) if wmmse_idx is not None else 0.0
+    dwmmse_idx = _get_best_curve(ESR_mean, algo_table, 'DWMMSE', 'DCC')
+    dwmmse_avg = float(np.mean(ESR_mean[dwmmse_idx, :])) if dwmmse_idx is not None else 0.0
 
     rows = []
     for pa_key in PA_ORDER:
@@ -255,12 +255,12 @@ def plot_fig4_method_summary(ESR_mean, algo_table, save_dir, enabled=True):
         avg = float(np.mean(ESR_mean[idx, :]))
         rows.append([PA_LABELS[PA_ORDER.index(pa_key)],
                       _pc_display(a["pc"]), a["mode"],
-                      f'{avg:.2f}', f'{avg - wmmse_avg:+.2f}',
+                      f'{avg:.2f}', f'{avg - dwmmse_avg:+.2f}',
                       notes.get(pa_key, '')])
 
     fig, ax = plt.subplots(figsize=(11, max(3, 0.45 * len(rows) + 1.5)))
     ax.axis('off')
-    headers = ['PA', 'Best PC', 'Mode', 'Avg ESR', 'vs WMMSE', 'Notes']
+    headers = ['PA', 'Best PC', 'Mode', 'Avg ESR', 'vs D-WMMSE', 'Notes']
     table = ax.table(cellText=rows, colLabels=headers, loc='center',
                      cellLoc='left', colLoc='left')
     table.auto_set_font_size(False)
@@ -300,13 +300,12 @@ def plot_fig5_timing(perf, snr_db, save_dir, enabled=True):
         except ValueError:
             return None
 
-    w_idx = _get_idx('WMMSE')
-    if w_idx is None:
+    d_idx = _get_idx('D-WMMSE')
+    if d_idx is None:
         return
 
-    learn_keys = ['Local-GNN', 'GNN', 'DCGNN', 'U-GNN', 'DDPG', 'DQN']
-    learn_colors = [PA_COLORS[0], PA_COLORS[3], PA_COLORS[2],
-                    PA_COLORS[1], PA_COLORS[4], PA_COLORS[5]]
+    learn_keys = ['Local-GNN', 'DCGNN', 'DDPG', 'DQN']
+    learn_colors = [PA_COLORS[0], PA_COLORS[1], PA_COLORS[2], PA_COLORS[3]]
     active, active_colors = [], []
     for i, nm in enumerate(learn_keys):
         mi = _get_idx(nm)
@@ -320,20 +319,20 @@ def plot_fig5_timing(perf, snr_db, save_dir, enabled=True):
         v = np.squeeze(np.mean(arr[idx, :, :], axis=1))
         return np.maximum(v.ravel(), np.finfo(float).eps)
 
-    wmmse_e2e = _curve(time_pa, w_idx)
+    dwmmse_e2e = _curve(time_pa, d_idx)
     e2e = {nm: _curve(time_pa, mi) for nm, mi in active}
-    wmmse_core = _curve(time_core, w_idx) if time_core is not None else wmmse_e2e
+    dwmmse_core = _curve(time_core, d_idx) if time_core is not None else dwmmse_e2e
     core = {nm: _curve(time_core, mi) for nm, mi in active} if time_core is not None else e2e
 
     fig, axes = plt.subplots(2, 2, figsize=(11.2, 7.2))
-    fig.suptitle(f'WMMSE vs Learning-family Timing: '
-                 f'WMMSE E2E {np.mean(wmmse_e2e) * 1000:.3f} ms, '
-                 f'Core {np.mean(wmmse_core) * 1000:.3f} ms',
+    fig.suptitle(f'D-WMMSE vs Learning-family Timing: '
+                 f'D-WMMSE E2E {np.mean(dwmmse_e2e) * 1000:.3f} ms, '
+                 f'Core {np.mean(dwmmse_core) * 1000:.3f} ms',
                  fontsize=FS_TITLE)
 
-    def _plot_time(ax, wmmse_t, method_t, title, subtitle):
-        ax.semilogy(snr_db, wmmse_t * 1000, '-s',
-                    color=WMMSE_COLOR, linewidth=2.2, markersize=7, label='WMMSE')
+    def _plot_time(ax, dwmmse_t, method_t, title, subtitle):
+        ax.semilogy(snr_db, dwmmse_t * 1000, '-s',
+                    color=DWMMSE_COLOR, linewidth=2.2, markersize=7, label='D-WMMSE')
         for (nm, _), c in zip(active, active_colors):
             ax.semilogy(snr_db, method_t[nm] * 1000, '-o',
                         color=c, linewidth=2.6, markersize=7, label=nm)
@@ -353,19 +352,19 @@ def plot_fig5_timing(perf, snr_db, save_dir, enabled=True):
         ax.set_xticks(x)
         ax.set_xticklabels([f'{s:.0f}' for s in snr_db])
         ax.set_xlabel('SNR (dB)', fontsize=FS_AXIS)
-        ax.set_ylabel('WMMSE / method time', fontsize=FS_AXIS)
+        ax.set_ylabel('D-WMMSE / method time', fontsize=FS_AXIS)
         ax.set_title(title, fontsize=FS_TITLE)
         ax.legend(loc='best', fontsize=FS_LEG)
         ax.grid(True)
 
-    speedup_e2e = {nm: wmmse_e2e / t for nm, t in e2e.items()}
-    speedup_core = {nm: wmmse_core / t for nm, t in core.items()}
+    speedup_e2e = {nm: dwmmse_e2e / t for nm, t in e2e.items()}
+    speedup_core = {nm: dwmmse_core / t for nm, t in core.items()}
 
-    _plot_time(axes[0, 0], wmmse_e2e, e2e,
+    _plot_time(axes[0, 0], dwmmse_e2e, e2e,
                'End-to-End PA Time', 'Includes bridge overhead')
     _plot_speedup(axes[0, 1], speedup_e2e, 'End-to-End Speedup')
-    _plot_time(axes[1, 0], wmmse_core, core,
-               'Core Compute Time', 'WMMSE loop vs GNN forward')
+    _plot_time(axes[1, 0], dwmmse_core, core,
+               'Core Compute Time', 'D-WMMSE update vs learned-model forward')
     _plot_speedup(axes[1, 1], speedup_core, 'Core Compute Speedup')
 
     fig.tight_layout(rect=[0, 0, 1, 0.95])
@@ -648,7 +647,7 @@ def plot_all_esr(ESR_mean, algo_table, snr_db, perf, save_dir, enabled=True):
 
     plot_fig1_best_pa_esr(ESR_mean, algo_table, snr_db, save_dir, enabled)
     plot_fig2_rmmse_pa(ESR_mean, algo_table, snr_db, save_dir, enabled)
-    plot_fig3_gnn_wmmse_gap(ESR_mean, algo_table, snr_db, save_dir, enabled)
+    plot_fig3_gnn_dwmmse_gap(ESR_mean, algo_table, snr_db, save_dir, enabled)
     plot_fig4_method_summary(ESR_mean, algo_table, save_dir, enabled)
     plot_fig5_timing(perf, snr_db, save_dir, enabled)
     print('[INFO] 5 ESR/timing figures generated.')

@@ -17,7 +17,7 @@ from torch.utils.data import DataLoader, random_split
 
 from torch_geometric.nn import GATConv
 from torch_geometric.data import Data, Batch
-from project_paths import MODEL_DIR, TRAINING_DATA_GLOB
+from config import MODEL_DIR, TRAINING_DATA_GLOB
 
 
 def _build_bipartite_edges(item, L, K, dynamic_top_z=None):
@@ -342,6 +342,9 @@ def evaluate_mlp(model, dataloader, device):
 
     avg_mse = total_mse / max(n_samples, 1)
 
+    if not all_rho_pred:
+        return avg_mse, 0.0, 0.0
+
     rho_pred_cat = torch.cat(all_rho_pred, dim=0).numpy()
     rho_true_cat = torch.cat(all_rho_true, dim=0).numpy()
     nonzero_cat = torch.cat(all_nonzero_mask, dim=0).numpy()
@@ -634,6 +637,9 @@ def evaluate(model, dataloader, device):
     avg_mse = total_mse / max(n_samples, 1)
 
     # 只在非零 rho 位置算相关性
+    if not all_rho_pred:
+        return avg_mse, 0.0, 0.0
+
     rho_pred_cat = torch.cat(all_rho_pred, dim=0).numpy()
     rho_true_cat = torch.cat(all_rho_true, dim=0).numpy()
     nonzero_cat = torch.cat(all_nonzero_mask, dim=0).numpy()
@@ -659,7 +665,7 @@ def evaluate(model, dataloader, device):
 def main():
     from dataset import GNNDataset
 
-    parser = argparse.ArgumentParser(description='Train GNN Power Allocation Model with GATConv')
+    parser = argparse.ArgumentParser(description='Train DCGNN Power Allocation Model with GATConv')
     parser.add_argument('--data', type=str,
                         default=TRAINING_DATA_GLOB,
                         help='Path to training data')
@@ -673,8 +679,8 @@ def main():
     parser.add_argument('--val_split', type=float, default=0.15, help='Validation split ratio')
     parser.add_argument('--output_dir', type=str, default=str(MODEL_DIR), help='Output directory')
     parser.add_argument('--patience', type=int, default=50, help='Early stopping patience (in epochs)')
-    parser.add_argument('--model_type', type=str, default='gat', choices=['gat', 'dcgnn'],
-                        help='gat uses all DCC AP-UE edges; dcgnn keeps dynamic top-z dominant edges')
+    parser.add_argument('--model_type', type=str, default='dcgnn', choices=['dcgnn'],
+                        help='dcgnn keeps dynamic top-z dominant AP-UE edges')
     parser.add_argument('--dcgnn_top_z', type=int, default=15,
                         help='Number of dominant AP-UE neighbors retained per AP/UE for model_type=dcgnn')
     args = parser.parse_args()
@@ -728,14 +734,17 @@ def main():
               f"mean={y_nz_mean:.3f}, share_sum_mean={sample['y_share'].sum(dim=1).mean():.3f}")
 
     # 划分数据集
-    val_size = int(len(dataset) * args.val_split)
+    if len(dataset) > 1:
+        val_size = max(1, int(len(dataset) * args.val_split))
+    else:
+        val_size = 0
     train_size = len(dataset) - val_size
     train_dataset, val_dataset = random_split(dataset, [train_size, val_size])
 
     print(f"\nTrain size: {train_size}, Val size: {val_size}")
 
     # 创建数据加载器
-    dynamic_top_z = args.dcgnn_top_z if args.model_type == 'dcgnn' else None
+    dynamic_top_z = args.dcgnn_top_z
     collate_fn = (lambda batch: custom_collate(batch, dynamic_top_z=dynamic_top_z))
 
     train_loader = DataLoader(
@@ -764,7 +773,7 @@ def main():
           f"layers={args.num_layers}, drop={args.dropout}")
     if args.model_type == 'dcgnn':
         print(f"  Dynamic graph: top_z={args.dcgnn_top_z} dominant AP-UE edges per AP/UE")
-    print(f"  Target: per-AP WMMSE power share (share logits)")
+    print(f"  Target: per-AP D-WMMSE power share (share logits)")
 
     model = PowerGNN_GAT(
         L=L, K=K,
@@ -779,7 +788,7 @@ def main():
     print(f"  Model parameters: {n_params:,}")
 
     # ── OneCycleLR: 自动 warmup + cosine decay ──
-    steps_per_epoch = len(dataset) // args.batch_size + 1
+    steps_per_epoch = max(1, len(train_loader))
     total_steps = args.epochs * steps_per_epoch
     optimizer = optim.AdamW(model.parameters(), lr=args.lr_max / 10, weight_decay=5e-4)
     scheduler = optim.lr_scheduler.OneCycleLR(
@@ -803,8 +812,8 @@ def main():
     save_interval = 50   # 每 N 轮存一次盘
 
     os.makedirs(args.output_dir, exist_ok=True)
-    best_filename = 'best_dcgnn_power.pt' if args.model_type == 'dcgnn' else 'best_gat_gnn_power.pt'
-    final_filename = 'final_dcgnn_power.pt' if args.model_type == 'dcgnn' else 'final_gat_gnn_power.pt'
+    best_filename = 'best_dcgnn_power.pt'
+    final_filename = 'final_dcgnn_power.pt'
 
     for epoch in range(args.epochs):
         train_loss = train_epoch(model, train_loader, optimizer, scheduler, device)
@@ -841,7 +850,7 @@ def main():
                 'feature_schema': 'masked_gain_snr_csi_degree_sumgain_v2',
                 'val_mse': best_val_loss,
                 'val_corr': best_metrics.get('val_corr', 0),
-                'norm_method': 'per_ap_wmmse_share',
+                'norm_method': 'per_ap_dwmmse_share',
                 'output_kind': 'share_logits',
                 'output_scale': model.output_scale,
                 'args': args
@@ -867,7 +876,7 @@ def main():
         'feature_schema': 'masked_gain_snr_csi_degree_sumgain_v2',
         'val_mse': best_val_loss,
         'val_corr': best_metrics.get('val_corr', 0),
-        'norm_method': 'per_ap_wmmse_share',
+        'norm_method': 'per_ap_dwmmse_share',
         'output_kind': 'share_logits',
         'output_scale': model.output_scale,
         'args': args
@@ -881,7 +890,7 @@ def main():
         'model_type': args.model_type,
         'dcgnn_top_z': args.dcgnn_top_z if args.model_type == 'dcgnn' else None,
         'feature_schema': 'masked_gain_snr_csi_degree_sumgain_v2',
-        'norm_method': 'per_ap_wmmse_share',
+        'norm_method': 'per_ap_dwmmse_share',
         'output_kind': 'share_logits',
         'output_scale': model.output_scale,
         'args': args
