@@ -37,7 +37,7 @@ goto parse_args
 if /I "%MODE%"=="small" (
     set "EXPORT_ARGS=--snapshots-per-snr 2 --snr-db 5 10 15 20 25 30 --realizations 10 --setups 1"
     set "TRAIN_EPOCHS=3"
-    set "SIM_ARGS=--num-scenarios 1 --realizations 10 --snr-db 5 10 15 20 25 30 --pa baseline,EPA,FPCP,DWMMSE,LocalGNN,DCGNN,DQN,DDPG --pc MR,LMMSE,RMMSE,LMMSE_G --no-sync-ablation"
+    set "SIM_ARGS=--num-scenarios 1 --realizations 10 --snr-db 5 10 15 20 25 30 --pa baseline,EPA,FPCP,DWMMSE,LocalGNN,PaperDCGNN,DQN,DDPG --pc MR,LMMSE,RMMSE,LMMSE_G --no-sync-ablation"
 ) else (
     set "EXPORT_ARGS="
     set "TRAIN_EPOCHS=300"
@@ -89,7 +89,7 @@ python "%PYTHON_DIR%\validation.py" "%LATEST_DATA%" || goto fail
 
 echo.
 echo [4/7] Training or reusing learned power-allocation models...
-call :train_if_needed "%MODELS_DIR%\best_dcgnn_power.pt" "DCGNN" "python ""%PYTHON_DIR%\train_gnn.py"" --data ""%LATEST_DATA%"" --epochs %TRAIN_EPOCHS% --output_dir ""%MODELS_DIR%"" --model_type dcgnn --dcgnn_top_z 15" || goto fail
+call :train_if_needed "%MODELS_DIR%\best_paper_dcgnn.pt" "PaperDCGNN" "python ""%PYTHON_DIR%\train_dcgnn_paper.py"" --L 100 --K 20 --z 15 --epochs %TRAIN_EPOCHS% --output_dir ""%MODELS_DIR%""" || goto fail
 call :train_if_needed "%MODELS_DIR%\best_local_gnn_power.pt" "Local-GNN" "python ""%PYTHON_DIR%\train_gnn_local.py"" --data ""%LATEST_DATA%"" --epochs %TRAIN_EPOCHS% --output_dir ""%MODELS_DIR%""" || goto fail
 
 echo.

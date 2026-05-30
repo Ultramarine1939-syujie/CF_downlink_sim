@@ -21,10 +21,10 @@ from simulator import (
     compute_rho_dist,
     compute_rho_epa,
     compute_rho_fpcp,
-    compute_rho_gnn,
     compute_rho_local_gnn,
     compute_rho_random,
     compute_rho_rl,
+    compute_rho_dcgnn_paper,
     compute_se,
     db2pow,
     default_params,
@@ -45,7 +45,7 @@ from config import FIGURE_DIR, MODEL_DIR, PROJECT_ROOT, SIMULATION_DATA_DIR
 
 
 TRAD_PA = ["baseline", "random", "EPA", "FPCP", "DWMMSE"]
-LEARNED_PA = ["LocalGNN", "DCGNN", "DQN", "DDPG"]
+LEARNED_PA = ["LocalGNN", "PaperDCGNN", "DQN", "DDPG"]
 ALL_PA = TRAD_PA + LEARNED_PA
 ALL_PC = ["MR", "LMMSE", "RMMSE", "LMMSE_G"]
 
@@ -77,7 +77,7 @@ def parse_args() -> argparse.Namespace:
 def resolved_model_paths(params: dict[str, Any]) -> dict[str, Path]:
     return {
         "LocalGNN": PROJECT_ROOT / params["gnn"]["localModelFile"],
-        "DCGNN": PROJECT_ROOT / params["gnn"]["dcgnnModelFile"],
+        "PaperDCGNN": PROJECT_ROOT / params["gnn"]["paperDcgnnModelFile"],
         "DQN": PROJECT_ROOT / params["rl"]["dqnModelFile"],
         "DDPG": PROJECT_ROOT / params["rl"]["ddpgModelFile"],
     }
@@ -390,8 +390,8 @@ def compute_pa_once(
         return rho, timing
     if pa_key == "LocalGNN":
         return compute_rho_local_gnn(D, gain, Pt, model_paths["LocalGNN"], params["csi"]["sigma_e"])
-    if pa_key == "DCGNN":
-        return compute_rho_gnn(D, gain, Pt, model_paths["DCGNN"], params["csi"]["sigma_e"])
+    if pa_key == "PaperDCGNN":
+        return compute_rho_dcgnn_paper(D, gain, Pt, model_paths["PaperDCGNN"], params["csi"]["sigma_e"])
     if pa_key == "DQN":
         return compute_rho_rl(D, gain, Pt, model_paths["DQN"], params["csi"]["sigma_e"])
     if pa_key == "DDPG":
@@ -498,7 +498,7 @@ def run_simulation(args: argparse.Namespace) -> None:
         "time_pc_sec": np.zeros((len(ALL_PC), num_snr, len(modes))),
         "model_param_count": {
             "Local-GNN": count_model_parameters(model_paths["LocalGNN"]),
-            "DCGNN": count_model_parameters(model_paths["DCGNN"]),
+            "PaperDCGNN": count_model_parameters(model_paths["PaperDCGNN"]),
             "DQN": count_model_parameters(model_paths["DQN"]),
             "DDPG": count_model_parameters(model_paths["DDPG"]),
         },
@@ -611,7 +611,7 @@ def run_simulation(args: argparse.Namespace) -> None:
                     continue
                 rho, timing = compute_pa_once(pa_key, D, gain, Hhat, Pt, N, K, L, nbr, params, model_paths)
                 pa_cache[pa_key] = (rho, timing)
-                centralized_learned = {"DCGNN", "DQN", "DDPG"}
+                centralized_learned = {"DCGNN", "PaperDCGNN", "DQN", "DDPG"}
                 update_perf(perf, pa_key, si, mode_idx, timing, comm_bytes=L * K * 16 if pa_key in centralized_learned else 0.0)
 
             for ai, algo in enumerate(algo_table):

@@ -1,9 +1,11 @@
-"""Fast MATLAB-facing GNN inference runtime.
+"""Fast GNN inference runtime for CF downlink power allocation.
+
+Supports two DCGNN variants:
+  - dcgnn (GAT-based): current codebase default (GATConv + supervised)
+  - paper_dcgnn:        paper-aligned DCGNN (shared FC + unsupervised)
 
 This module keeps Python-side model state cached and measures the parts of
-GNN inference separately. MATLAB should cross the Python boundary once per
-sample, then Python handles feature construction, PyG batching, forward, and
-post-processing internally.
+GNN inference separately.
 """
 
 from __future__ import annotations
@@ -17,6 +19,7 @@ import numpy as np
 import torch
 
 from train_gnn import PowerGNN_GAT, PowerGNN_MLP, custom_collate, custom_collate_mlp
+from dcgnn_paper import PaperDCGNN, load_paper_dcgnn, infer_paper_dcgnn as _infer_paper
 
 
 @dataclass
@@ -221,6 +224,81 @@ def infer(model_path, sqrt_gain, D_mask, Pt=1.0, sigma_e=0.3):
         "forward_sec": float(forward_sec),
         "post_sec": float(post_sec),
         "mix_lambda_mean": float(mix_lambda_mean),
+        "python_total_sec": float(python_total_sec),
+    }
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Paper DCGNN inference
+# ═══════════════════════════════════════════════════════════════════════════
+
+_PAPER_DCGNN_CACHE: Dict[str, PaperDCGNN] = {}
+
+
+def infer_paper_dcgnn(
+    model_path_str: str,
+    sqrt_gain: np.ndarray,
+    D_mask: np.ndarray,
+    Pt: float = 1.0,
+    sigma_e: float = 0.3,
+) -> dict:
+    """Run inference with a paper-aligned DCGNN model.
+
+    Args:
+        model_path_str: path to .pt checkpoint (saved by train_dcgnn_paper.py)
+        sqrt_gain:      (L, K)  sqrt(β_{k,l}) — input feature from simulator
+        D_mask:         (L, K)  DCC AP-UE association mask
+        Pt:             per-AP power limit (pmax in paper)
+        sigma_e:        CSI error (unused — paper DCGNN only uses large-scale β)
+
+    Returns:
+        dict with keys: rho, load_sec, forward_sec, python_total_sec, ...
+    """
+    total_t0 = time.perf_counter()
+    model_path = os.path.abspath(str(model_path_str))
+
+    D = np.asarray(D_mask, dtype=np.float64)
+    L, K = D.shape
+    sqrt_gain_arr = np.asarray(sqrt_gain, dtype=np.float64)
+    if sqrt_gain_arr.shape == (K, L):
+        sqrt_gain_arr = sqrt_gain_arr.T
+    Pt = float(Pt)
+
+    # β = (sqrt_gain)² , but the simulator's gainOverNoise already includes
+    # the noise normalisation.  Use sqrt_gain² as β (linear scale).
+    beta = np.maximum(sqrt_gain_arr ** 2, 1e-12).astype(np.float32)
+
+    # Load / cache model
+    load_t0 = time.perf_counter()
+    if model_path not in _PAPER_DCGNN_CACHE:
+        _PAPER_DCGNN_CACHE[model_path] = load_paper_dcgnn(model_path)
+    model = _PAPER_DCGNN_CACHE[model_path]
+    load_sec = time.perf_counter() - load_t0
+
+    # Forward
+    forward_t0 = time.perf_counter()
+    rho_raw = _infer_paper(model, beta, pmax=Pt)
+    forward_sec = time.perf_counter() - forward_t0
+
+    # Post: apply D mask (only allocate power to served UEs)
+    post_t0 = time.perf_counter()
+    rho_masked = rho_raw * (D > 0.5)
+    # Re-normalise per-AP power after masking
+    row_power = rho_masked.sum(axis=1, keepdims=True)
+    valid = row_power[:, 0] > 0
+    rho = np.where(valid[:, None], Pt * rho_masked / np.maximum(row_power, 1e-12), 0.0)
+    rho = rho.astype(np.float64)
+    post_sec = time.perf_counter() - post_t0
+
+    python_total_sec = time.perf_counter() - total_t0
+    return {
+        "rho": rho,
+        "load_sec": float(load_sec),
+        "feature_sec": 0.0,
+        "collate_sec": 0.0,
+        "forward_sec": float(forward_sec),
+        "post_sec": float(post_sec),
+        "mix_lambda_mean": 1.0,
         "python_total_sec": float(python_total_sec),
     }
 

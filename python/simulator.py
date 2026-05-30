@@ -92,6 +92,7 @@ def default_params() -> dict[str, Any]:
             "fullModelFile": Path("models") / "best_local_gnn_power.pt",
             "localModelFile": Path("models") / "best_local_gnn_power.pt",
             "dcgnnModelFile": Path("models") / "best_dcgnn_power.pt",
+            "paperDcgnnModelFile": Path("models") / "best_paper_dcgnn.pt",
         },
         "rl": {
             "dqnModelFile": Path("models") / "best_dqn_power.pt",
@@ -752,6 +753,43 @@ def compute_rho_rl(
         return compute_rho_epa(D, Pt), timing
 
 
+def compute_rho_dcgnn_paper(
+    D: np.ndarray,
+    gain_over_noise: np.ndarray,
+    Pt: float,
+    model_path: Path | str,
+    sigma_e: float,
+) -> tuple[np.ndarray, dict[str, float]]:
+    """Run paper-aligned DCGNN inference (unsupervised, link-node graph).
+
+    See :mod:`dcgnn_paper` for the architecture description and
+    :mod:`gnn_inference` → ``infer_paper_dcgnn`` for the runtime.
+    """
+    t0 = time.perf_counter()
+    model_path = Path(model_path)
+    if not model_path.is_file():
+        timing = empty_timing()
+        timing["total_sec"] = time.perf_counter() - t0
+        timing["forward_sec"] = timing["total_sec"]
+        return compute_rho_epa(D, Pt), timing
+    try:
+        import gnn_inference
+
+        out = gnn_inference.infer_paper_dcgnn(
+            str(model_path), np.sqrt(np.maximum(gain_over_noise, 0.0)), D, Pt, sigma_e,
+        )
+        timing = {**empty_timing(), **{k: float(v) for k, v in out.items() if k.endswith("_sec")}}
+        timing["mix_lambda_mean"] = float(out.get("mix_lambda_mean", 1.0))
+        timing["total_sec"] = float(out.get("python_total_sec", time.perf_counter() - t0))
+        return np.asarray(out["rho"], dtype=np.float64), timing
+    except Exception as exc:  # pragma: no cover
+        _warn_model_once(str(model_path), f"Paper-DCGNN inference failed; falling back to EPA. {exc}")
+        timing = empty_timing()
+        timing["total_sec"] = time.perf_counter() - t0
+        timing["forward_sec"] = timing["total_sec"]
+        return compute_rho_epa(D, Pt), timing
+
+
 def build_algo_table(pa_keys: list[str] | None = None, pc_keys: list[str] | None = None, modes: list[str] | None = None) -> list[dict[str, Any]]:
     pa = {
         "baseline": ("Baseline", "distributed"),
@@ -760,7 +798,7 @@ def build_algo_table(pa_keys: list[str] | None = None, pc_keys: list[str] | None
         "FPCP": ("FPCP", "distributed"),
         "DWMMSE": ("D-WMMSE", "distributed"),
         "LocalGNN": ("Local-GNN", "distributed"),
-        "DCGNN": ("DCGNN", "low_latency_centralized"),
+        "PaperDCGNN": ("PaperDCGNN", "low_latency_centralized"),
         "DQN": ("DQN", "low_latency_centralized"),
         "DDPG": ("DDPG", "low_latency_centralized"),
     }
@@ -797,7 +835,7 @@ def build_algo_table(pa_keys: list[str] | None = None, pc_keys: list[str] | None
 
 
 def method_names() -> list[str]:
-    return ["Baseline", "FPCP", "D-WMMSE", "Local-GNN", "DCGNN", "DQN", "DDPG"]
+    return ["Baseline", "FPCP", "D-WMMSE", "Local-GNN", "PaperDCGNN", "DQN", "DDPG"]
 
 
 def pa_to_method(pa_key: str) -> str | None:
@@ -806,7 +844,7 @@ def pa_to_method(pa_key: str) -> str | None:
         "FPCP": "FPCP",
         "DWMMSE": "D-WMMSE",
         "LocalGNN": "Local-GNN",
-        "DCGNN": "DCGNN",
+        "PaperDCGNN": "PaperDCGNN",
         "DQN": "DQN",
         "DDPG": "DDPG",
     }.get(pa_key)
@@ -979,8 +1017,8 @@ def maybe_plot_esr(
         return
 
     save_dir.mkdir(parents=True, exist_ok=True)
-    pa_order = ["LocalGNN", "DCGNN", "DDPG", "DQN", "DWMMSE", "FPCP", "EPA", "random", "baseline"]
-    pa_labels = ["Local-GNN", "DCGNN", "DDPG", "DQN", "D-WMMSE", "FPCP", "EPA", "Random", "Baseline"]
+    pa_order = ["PaperDCGNN", "LocalGNN", "DDPG", "DQN", "DWMMSE", "FPCP", "EPA", "random", "baseline"]
+    pa_labels = ["PaperDCGNN", "Local-GNN", "DDPG", "DQN", "D-WMMSE", "FPCP", "EPA", "Random", "Baseline"]
     colors = plt.cm.tab20(np.linspace(0, 1, len(pa_order)))
 
     plt.figure(figsize=(10, 6))
@@ -1146,13 +1184,12 @@ def lookup_feature_collection_bytes(
 ) -> tuple[float, float]:
     if pa_name == "LocalGNN":
         return 0.0, 0.0
-    method = {"DCGNN": "DCGNN", "DQN": "DQN", "DDPG": "DDPG"}.get(pa_name)
+    method = {"PaperDCGNN": "PaperDCGNN", "DQN": "DQN", "DDPG": "DDPG"}.get(pa_name)
     if method is None:
         return 0.0, 0.0
-    if pa_name == "DCGNN":
+    if pa_name == "PaperDCGNN":
         z = int(cfg.get("dcgnnTopZ", 15))
-        edge_count = min(L * K, z * (L + K))
-        bytes_value = float(edge_count * cfg.get("edgeFeatureBytes", 8.0) + (L + K) * 8.0)
+        bytes_value = float(L * K * z * cfg.get("edgeFeatureBytes", 8.0))
     elif pa_name in {"DQN", "DDPG"}:
         bytes_value = float(L * K * 12.0)
     else:
@@ -1180,12 +1217,12 @@ def estimate_model_inference_ms(pa_name: str, L: int, K: int, cfg: dict[str, Any
     gops = float(cfg.get("inferenceGops", 80.0))
     controller_gops = float(cfg.get("controllerGops", 200.0))
 
-    if pa_name == "DCGNN":
+    if pa_name == "PaperDCGNN":
+        # Paper DCGNN: shared FC filters (~8.5K params) + L*K*z feature lookups
         z = int(cfg.get("dcgnnTopZ", 15))
-        dc_edges = min(edge_count, z * (L + K))
         param_ops = lookup_model_param_count(pa_name, perf) * 2.0
-        message_ops = dc_edges * layers * hidden * max(heads, 1) * 2.0
-        return ops_to_ms(param_ops + message_ops, controller_gops)
+        feature_ops = edge_count * z * 4.0
+        return ops_to_ms(param_ops + feature_ops, gops)
     if pa_name == "LocalGNN":
         local_hidden = int(cfg.get("localHiddenDim", 96))
         local_layers = int(cfg.get("localLayers", 3))
@@ -1206,12 +1243,12 @@ def estimate_model_inference_ms(pa_name: str, L: int, K: int, cfg: dict[str, Any
 
 def lookup_model_param_count(pa_name: str, perf: dict[str, Any]) -> float:
     counts = perf.get("model_param_count", {}) if isinstance(perf, dict) else {}
-    key_map = {"DCGNN": "DCGNN", "LocalGNN": "Local-GNN", "DQN": "DQN", "DDPG": "DDPG"}
+    key_map = {"PaperDCGNN": "PaperDCGNN", "LocalGNN": "Local-GNN", "DQN": "DQN", "DDPG": "DDPG"}
     value = counts.get(key_map.get(pa_name, pa_name), 0.0)
     if value and np.isfinite(value):
         return float(value)
     return {
-        "DCGNN": 400_000.0,
+        "PaperDCGNN": 8_500.0,
         "LocalGNN": 110_000.0,
         "DQN": 2_100_000.0,
         "DDPG": 5_200_000.0,

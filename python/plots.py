@@ -18,9 +18,9 @@ import numpy as np
 
 # ── Shared style constants (match MATLAB paColors / paMarkers) ──────────
 
-PA_ORDER = ["LocalGNN", "DCGNN", "DDPG", "DQN",
+PA_ORDER = ["LocalGNN", "PaperDCGNN", "DDPG", "DQN",
             "DWMMSE", "FPCP", "EPA", "random", "baseline"]
-PA_LABELS = ["Local-GNN", "DCGNN", "DDPG", "DQN",
+PA_LABELS = ["Local-GNN", "PaperDCGNN", "DDPG", "DQN",
              "D-WMMSE", "FPCP", "EPA", "Random", "Baseline"]
 PA_COLORS = [
     (0.00, 0.52, 0.58), (0.10, 0.35, 0.95),
@@ -120,7 +120,7 @@ def plot_fig1_best_pa_esr(ESR_mean, algo_table, snr_db, save_dir, enabled=True):
         idx = _get_best_curve(ESR_mean, algo_table, pa_key, 'DCC')
         if idx is None:
             continue
-        is_learning = pa_key in {'LocalGNN', 'DCGNN', 'DQN', 'DDPG'}
+        is_learning = pa_key in {'LocalGNN', 'PaperDCGNN', 'DQN', 'DDPG'}
         lw = LW_GNN if is_learning else LW_BASE
         ax.plot(snr_db, ESR_mean[idx, :], f'-{PA_MARKERS[pi]}',
                 color=PA_COLORS[pi], linewidth=lw, markersize=7)
@@ -153,7 +153,7 @@ def plot_fig2_rmmse_pa(ESR_mean, algo_table, snr_db, save_dir, enabled=True):
         idx = _find_exact(algo_table, pa_key, fixed_pc, 'DCC')
         if idx is None:
             continue
-        is_learning = pa_key in {'LocalGNN', 'DCGNN', 'DQN', 'DDPG'}
+        is_learning = pa_key in {'LocalGNN', 'PaperDCGNN', 'DQN', 'DDPG'}
         lw = LW_GNN if is_learning else LW_BASE
         ax.plot(snr_db, ESR_mean[idx, :], f'-{PA_MARKERS[pi]}',
                 color=PA_COLORS[pi], linewidth=lw, markersize=7)
@@ -304,7 +304,7 @@ def plot_fig5_timing(perf, snr_db, save_dir, enabled=True):
     if d_idx is None:
         return
 
-    learn_keys = ['Local-GNN', 'DCGNN', 'DDPG', 'DQN']
+    learn_keys = ['Local-GNN', 'PaperDCGNN', 'DDPG', 'DQN']
     learn_colors = [PA_COLORS[0], PA_COLORS[1], PA_COLORS[2], PA_COLORS[3]]
     active, active_colors = [], []
     for i, nm in enumerate(learn_keys):
